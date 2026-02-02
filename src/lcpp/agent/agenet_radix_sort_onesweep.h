@@ -40,7 +40,7 @@ struct AgentRadixSortOneSweepPolicy : RegBoundScaling<NominalBlockThreads4B, Nom
 namespace details
 {
     using namespace luisa::compute;
-    template <NumericT KeyType, NumericT ValueType, size_t RADIX_BITS, size_t RANK_NUM_PARTS, bool KEYS_ONLY, bool IS_DESCENDING, size_t BLOCK_SIZE, size_t WARP_SIZE, size_t ITEMS_PER_THREAD>
+    template <NumericT KeyType, NumericT ValueType, bool KEYS_ONLY, size_t RADIX_BITS, size_t RANK_NUM_PARTS, bool IS_DESCENDING, size_t BLOCK_SIZE, size_t WARP_SIZE, size_t ITEMS_PER_THREAD>
     class AgentRadixSortOneSweep : public LuisaModule
     {
       public:
@@ -68,13 +68,14 @@ namespace details
 
         using BlockRadixRankT = BlockRadixRankMatchEarlyCounts<BLOCK_SIZE, RADIX_BITS, IS_DESCENDING>;
 
-        static inline Callable ThreadBin = [](UInt u) { return thread_id().x * UInt(BINS_PER_THREAD) + u; };
+        static inline Callable ThreadBin = [](UInt u)
+        { return thread_id().x * UInt(BINS_PER_THREAD) + u; };
 
         struct CountsCallback
         {
             using RadixSortOneSweepPolicy = AgentRadixSortOneSweepPolicy<1u, 8u, KeyType, 1u, RADIX_BITS>;
             using AgentT =
-                AgentRadixSortOneSweep<KeyType, ValueType, RADIX_BITS, RadixSortOneSweepPolicy::RANK_NUM_PARTS, KEYS_ONLY, IS_DESCENDING, BLOCK_SIZE, WARP_SIZE, ITEMS_PER_THREAD>;
+                AgentRadixSortOneSweep<KeyType, ValueType, KEYS_ONLY, RADIX_BITS, RadixSortOneSweepPolicy::RANK_NUM_PARTS, IS_DESCENDING, BLOCK_SIZE, WARP_SIZE, ITEMS_PER_THREAD>;
             AgentT&                                       agent;
             ArrayVar<uint, BINS_PER_THREAD>&              bins;
             ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys;
@@ -99,19 +100,21 @@ namespace details
             }
         };
 
-        AgentRadixSortOneSweep(SmemTypePtr<bit_ordered_type> smem_keys,
-                               BufferVar<uint>&              d_bins_out,
-                               BufferVar<uint>&              d_ctrs,
-                               BufferVar<KeyType>&           keys_in,
-                               BufferVar<KeyType>&           keys_out,
-                               BufferVar<ValueType>&         values_in,
-                               BufferVar<ValueType>&         values_out,
-                               UInt                          num_items,
-                               UInt                          begin_bit,
-                               UInt                          end_bit)
-            : m_shared_keys(smem_keys)
-            , d_bins_out(d_bins_out)
+        AgentRadixSortOneSweep(BufferVar<uint>&      d_lookback,
+                               BufferVar<uint>&      d_ctrs,
+                               BufferVar<uint>&      d_bins_in,
+                               BufferVar<uint>&      d_bins_out,
+                               BufferVar<KeyType>&   keys_in,
+                               BufferVar<KeyType>&   keys_out,
+                               BufferVar<ValueType>& values_in,
+                               BufferVar<ValueType>& values_out,
+                               UInt                  num_items,
+                               UInt                  begin_bit,
+                               UInt                  end_bit)
+            : d_lookback(d_lookback)
             , d_ctrs(d_ctrs)
+            , d_bins_in(d_bins_in)
+            , d_bins_out(d_bins_out)
             , d_keys_in(keys_in)
             , d_keys_out(keys_out)
             , d_values_in(values_in)
@@ -120,15 +123,20 @@ namespace details
             , begin_bit(begin_bit)
             , end_bit(end_bit)
         {
+            m_shared_keys      = new SmemType<bit_ordered_type>(TILE_ITEMS);
+            m_shared_block_idx = new SmemType<uint>(1);
+            m_shared_values    = KEYS_ONLY ? nullptr : new SmemType<ValueType>(TILE_ITEMS);
+            m_global_offsets   = new SmemType<uint>(RADIX_DIGITS);
             $if(thread_id().x == 0)
             {
-                m_block_idx->write(0, d_ctrs.atomic(0u).fetch_add(1u));
+                m_shared_block_idx->write(0, d_ctrs.atomic(0u).fetch_add(1u));
             };
 
             sync_block();
-            block_idx  = m_block_idx->read(0);
-            full_block = (block_idx + 1) * UInt(TILE_ITEMS) <= num_items;
+            block_idx  = m_shared_block_idx->read(0);
+            full_block = (block_idx + 1u) * UInt(TILE_ITEMS) <= num_items;
         }
+
 
         void LoadKeys(UInt tile_offset, ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys)
         {
@@ -190,20 +198,25 @@ namespace details
             LoadKeys(block_idx * TILE_ITEMS, keys);
 
             ArrayVar<uint, ITEMS_PER_THREAD> ranks;
-            ArrayVar<uint, ITEMS_PER_THREAD> exclusive_digit_prefix;
-            ArrayVar<uint, ITEMS_PER_THREAD> bins;
-            BlockRadixRankT().template RankKeys<KeyType>(
+            ArrayVar<uint, BINS_PER_THREAD>  exclusive_digit_prefix;
+            ArrayVar<uint, BINS_PER_THREAD>  bins;
+            BlockRadixRankT().template RankKeys<KeyType, ITEMS_PER_THREAD, digit_extractor_t, CountsCallback>(
                 keys, ranks, digit_extractor_t(), exclusive_digit_prefix, CountsCallback(*this, bins, keys));
 
             sync_block();
             ScatterKeysShared(keys, ranks);
 
             LoadBinsToOffsetsGlobal(exclusive_digit_prefix);
-            LoadbackGlobal(bins);
+            LookbackGlobal(bins);
             UpdateBinsGlobal(bins, exclusive_digit_prefix);
 
             sync_block();
             ScatterKeysGlobal();
+
+            if constexpr(!KEYS_ONLY)
+            {
+                GatherScatterValues(ranks);
+            }
         }
 
 
@@ -224,7 +237,7 @@ namespace details
                              const ArrayVar<uint, BINS_PER_THREAD>&              bins)
         {
             // check if any bins can be short-circuited
-            uint short_circuit = true;
+            UInt short_circuit = 1;
 
             for(auto i = 0u; i < BINS_PER_THREAD; ++i)
             {
@@ -254,39 +267,41 @@ namespace details
             }
         }
 
-        void LoadbackGlobal(const ArrayVar<uint, BINS_PER_THREAD>& bins)
+        void LookbackGlobal(const ArrayVar<uint, BINS_PER_THREAD>& bins)
         {
-            for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
+            for(auto u = 0u; u < BINS_PER_THREAD; ++u)
             {
-                UInt bin = ThreadBin(i);
+                UInt bin = ThreadBin(u);
                 $if(FULL_BINS | bin < UInt(RADIX_DIGITS))
                 {
-                    UInt inc_sum   = bins[i];
+                    UInt inc_sum   = bins[u];
                     Int  want_mask = ~0;
 
-                    UInt block_jdx = block_idx - 1;
+                    Int block_jdx = Int(block_idx) - 1;
                     $while(block_jdx >= 0)
                     {
-                        UInt value_j = 0;
-
+                        UInt loc_j   = block_jdx * UInt(RADIX_DIGITS) + bin;
+                        UInt value_j = d_lookback.volatile_read(loc_j);
                         $while(value_j == 0)
                         {
-                            value_j = d_lookback.read(block_jdx * UInt(RADIX_DIGITS) + bin);
+                            value_j = d_lookback.volatile_read(loc_j);
                         };
 
-                        inc_sum += value_j & LOOKBACK_VALUE_MASK;
-                        want_mask = warp_active_bit_mask((value_j & LOOKBACK_KIND_MASK) == 0).x;
-                        $if(value_j & LOOKBACK_GLOBAL_MASK)
+                        inc_sum += value_j & UInt(LOOKBACK_VALUE_MASK);
+                        want_mask = warp_active_bit_mask((value_j & UInt(LOOKBACK_KIND_MASK)) == 0).x;
+                        $if((value_j & UInt(LOOKBACK_GLOBAL_MASK)) != 0)
                         {
                             $break;
                         };
                         block_jdx -= 1;
                     };
-                    UInt loc_i   = d_lookback.read(block_idx * UInt(RADIX_DIGITS) + bin);
-                    UInt value_i = loc_i & LOOKBACK_GLOBAL_MASK;
-                    d_lookback.volatile_write(block_idx * UInt(RADIX_DIGITS) + bin, value_i);
 
-                    m_global_offsets->write(bin, m_global_offsets->read(bin) + inc_sum - bins[i]);
+
+                    UInt loc_i   = block_idx * UInt(RADIX_DIGITS) + bin;
+                    UInt value_i = inc_sum | UInt(LOOKBACK_GLOBAL_MASK);
+                    d_lookback.volatile_write(loc_i, value_i);
+
+                    m_global_offsets->write(bin, m_global_offsets->read(bin) + inc_sum - bins[u]);
                 };
             }
         }
@@ -298,7 +313,7 @@ namespace details
 
             $if(last_block)
             {
-                for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
+                for(auto i = 0u; i < BINS_PER_THREAD; ++i)
                 {
                     UInt bin = ThreadBin(i);
                     $if(FULL_BINS | bin < UInt(RADIX_DIGITS))
@@ -317,7 +332,7 @@ namespace details
 
             ArrayVar<uint, BINS_PER_THREAD> offsets;
 
-            for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
+            for(auto i = 0u; i < BINS_PER_THREAD; ++i)
             {
                 UInt bin   = ThreadBin(i);
                 offsets[i] = select(0u, UInt(TILE_ITEMS), bin > common_bits);
@@ -348,8 +363,6 @@ namespace details
 
             if constexpr(!KEYS_ONLY)
             {
-
-
                 ArrayVar<ValueType, ITEMS_PER_THREAD> values;
                 LoadValues(block_idx * UInt(TILE_ITEMS), values);
                 $if(full_block)
@@ -424,7 +437,7 @@ namespace details
         SmemTypePtr<bit_ordered_type> m_shared_keys;
         SmemTypePtr<ValueType>        m_shared_values;
         SmemTypePtr<uint>             m_global_offsets;
-        SmemTypePtr<uint>             m_block_idx;
+        SmemTypePtr<uint>             m_shared_block_idx;
 
         BufferVar<uint>& d_lookback;
         BufferVar<uint>& d_ctrs;

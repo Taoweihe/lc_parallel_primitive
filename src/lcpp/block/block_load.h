@@ -45,7 +45,7 @@ void LoadDirectStriped(compute::UInt                         linear_tid,
 {
     for(auto i = 0; i < ItemsPerThread; i++)
     {
-        auto src_pos = tile_offset + linear_tid + i * compute::UInt(BlockThreads);
+        UInt src_pos = tile_offset + linear_tid + i * compute::UInt(BlockThreads);
         $if(src_pos < block_item_end)
         {
             dst_items[i] = block_src_it.read(src_pos);
@@ -75,14 +75,15 @@ void LoadDirectWarpStriped(compute::UInt                         linear_tid,
                            compute::UInt                         tile_offset,
                            compute::ArrayVar<T, ItemsPerThread>& dst_items)
 {
-    compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
-    compute::UInt wid         = linear_tid >> compute::log2(compute::UInt(WARP_SIZE));
+    compute::UInt tid = linear_tid & compute::UInt(WARP_SIZE - 1);
+    compute::UInt wid = linear_tid >> compute::UInt(compute::log2(compute::Float(WARP_SIZE)));
     compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
 
     // Load directly in warp-striped order
     for(int i = 0; i < ItemsPerThread; i++)
     {
-        dst_items[i] = block_src_it.read(tile_offset + warp_offset + tid + (i * compute::UInt(WARP_SIZE)));
+        UInt src_pos = tile_offset + warp_offset + tid + (i * compute::UInt(WARP_SIZE));
+        dst_items[i] = block_src_it.read(src_pos);
     }
 }
 
@@ -94,13 +95,13 @@ void LoadDirectWarpStriped(compute::UInt                         linear_tid,
                            compute::ArrayVar<T, ItemsPerThread>& dst_items,
                            compute::UInt                         block_item_end)
 {
-    compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
-    compute::UInt wid         = linear_tid >> compute::log2(compute::UInt(WARP_SIZE));
+    compute::UInt tid = linear_tid & compute::UInt(WARP_SIZE - 1);
+    compute::UInt wid = linear_tid >> compute::UInt(compute::log2(compute::Float(WARP_SIZE)));
     compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
 
     for(auto i = 0; i < ItemsPerThread; i++)
     {
-        auto src_pos = tile_offset + warp_offset + tid * compute::UInt(WARP_SIZE);
+        UInt src_pos = tile_offset + warp_offset + tid + (i * compute::UInt(WARP_SIZE));
         $if(src_pos < block_item_end)
         {
             dst_items[i] = block_src_it.read(src_pos);

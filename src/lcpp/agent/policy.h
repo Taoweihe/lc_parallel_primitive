@@ -73,7 +73,7 @@ template <typename KeyType>
 struct OneSweepSmallKeyTunedPolicy
 {
     static constexpr bool ONESWEEP            = true;
-    static constexpr uint ONESWEEP_RAIDX_BITS = 8;
+    static constexpr uint ONESWEEP_RADIX_BITS = 8;
 };
 
 

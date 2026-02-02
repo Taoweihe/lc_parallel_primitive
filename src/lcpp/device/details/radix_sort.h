@@ -108,41 +108,84 @@ namespace details
 
 
     using namespace luisa::compute;
-    template <NumericT KeyType, NumericT ValueType, bool IS_DESCENDING, size_t RADIX_BIT = 8u, size_t BLOCK_SIZE = details::BLOCK_SIZE, size_t WARP_SIZE = details::WARP_SIZE, size_t ITEMS_PER_THREAD = details::ITEMS_PER_THREAD>
-    class RadixSortOneSweepModule : public LuisaModule
+    template <NumericT KeyType, bool IS_DESCENDING, size_t RADIX_BIT = 8u, size_t BLOCK_SIZE = details::BLOCK_SIZE, size_t WARP_SIZE = details::WARP_SIZE, size_t ITEMS_PER_THREAD = details::ITEMS_PER_THREAD>
+    class RadixSortOneSweepOnlyKeyModule : public LuisaModule
     {
       public:
-        using RadixSortOneSweepKernel = Shader<1, Buffer<uint>, Buffer<uint>>;
+        // key pair
+        using RadixSortOneSweepOnlyKeyKernel =
+            Shader<1, Buffer<uint>, Buffer<uint>, Buffer<uint>, Buffer<uint>, Buffer<KeyType>, Buffer<KeyType>, uint, uint, uint>;
 
-        U<RadixSortOneSweepKernel> compile(Device& device)
+        U<RadixSortOneSweepOnlyKeyKernel> compile(Device& device)
         {
-            U<RadixSortOneSweepKernel> ms_radix_sort_exclusive_sum_shader = nullptr;
+            U<RadixSortOneSweepOnlyKeyKernel> ms_radix_sort_onesweep_kernel = nullptr;
             lazy_compile(
                 device,
-                ms_radix_sort_exclusive_sum_shader,
+                ms_radix_sort_onesweep_kernel,
                 [&](BufferVar<uint>    d_lookback,
                     BufferVar<uint>    d_ctrs,
                     BufferVar<uint>    d_bins_in,
                     BufferVar<uint>    d_bins_out,
                     BufferVar<KeyType> d_keys_in,
                     BufferVar<KeyType> d_keys_out,
-                    uint               num_elements,
-                    uint               start_bit,
-                    uint               end_bit) noexcept
+                    compute::UInt      num_items,
+                    compute::UInt      current_bit,
+                    compute::UInt      num_bits) noexcept
                 {
                     set_block_size(BLOCK_SIZE);
                     set_warp_size(WARP_SIZE);
 
                     using RadixSortOneSweepPolicy = AgentRadixSortOneSweepPolicy<1u, 8u, KeyType, 1u, RADIX_BIT>;
                     using AgentT =
-                        AgentRadixSortOneSweep<KeyType, ValueType, RADIX_BIT, RadixSortOneSweepPolicy::RANK_NUM_PARTS, false, IS_DESCENDING, BLOCK_SIZE, WARP_SIZE, ITEMS_PER_THREAD>;
+                        AgentRadixSortOneSweep<KeyType, KeyType, true, RADIX_BIT, RadixSortOneSweepPolicy::RANK_NUM_PARTS, IS_DESCENDING, BLOCK_SIZE, WARP_SIZE, ITEMS_PER_THREAD>;
 
-                    SmemTypePtr<uint> s_bins = new SmemType<uint>{AgentT::SHARED_MEM_SIZE};
-
-                    AgentT agent(s_bins, d_lookback, d_ctrs, d_bins_in, d_bins_out, d_keys_in, d_keys_out, num_elements, start_bit, end_bit);
+                    AgentT agent(
+                        d_lookback, d_ctrs, d_bins_in, d_bins_out, d_keys_in, d_keys_out, d_keys_in, d_keys_out, num_items, current_bit, num_bits);
                     agent.Process();
                 });
-            return ms_radix_sort_exclusive_sum_shader;
+            return ms_radix_sort_onesweep_kernel;
+        };
+    };
+
+
+    template <NumericT KeyType, typename ValueType, bool IS_DESCENDING, size_t RADIX_BIT = 8u, size_t BLOCK_SIZE = details::BLOCK_SIZE, size_t WARP_SIZE = details::WARP_SIZE, size_t ITEMS_PER_THREAD = details::ITEMS_PER_THREAD>
+    class RadixSortOneSweepModule : public LuisaModule
+    {
+      public:
+        // key value pair
+        using RadixSortOneSweepKernel =
+            Shader<1, Buffer<uint>, Buffer<uint>, Buffer<uint>, Buffer<uint>, Buffer<KeyType>, Buffer<KeyType>, Buffer<ValueType>, Buffer<ValueType>, uint, uint, uint>;
+
+        U<RadixSortOneSweepKernel> compile(Device& device)
+        {
+            U<RadixSortOneSweepKernel> ms_radix_sort_onesweep_kernel = nullptr;
+            lazy_compile(
+                device,
+                ms_radix_sort_onesweep_kernel,
+                [&](BufferVar<uint>      d_lookback,
+                    BufferVar<uint>      d_ctrs,
+                    BufferVar<uint>      d_bins_in,
+                    BufferVar<uint>      d_bins_out,
+                    BufferVar<KeyType>   d_keys_in,
+                    BufferVar<KeyType>   d_keys_out,
+                    BufferVar<ValueType> d_values_in,
+                    BufferVar<ValueType> d_values_out,
+                    compute::UInt        num_items,
+                    compute::UInt        current_bit,
+                    compute::UInt        num_bits) noexcept
+                {
+                    set_block_size(BLOCK_SIZE);
+                    set_warp_size(WARP_SIZE);
+
+                    using RadixSortOneSweepPolicy = AgentRadixSortOneSweepPolicy<1u, 8u, KeyType, 1u, RADIX_BIT>;
+                    using AgentT =
+                        AgentRadixSortOneSweep<KeyType, ValueType, false, RADIX_BIT, RadixSortOneSweepPolicy::RANK_NUM_PARTS, IS_DESCENDING, BLOCK_SIZE, WARP_SIZE, ITEMS_PER_THREAD>;
+
+                    AgentT agent(
+                        d_lookback, d_ctrs, d_bins_in, d_bins_out, d_keys_in, d_keys_out, d_values_in, d_values_out, num_items, current_bit, num_bits);
+                    agent.Process();
+                });
+            return ms_radix_sort_onesweep_kernel;
         };
     };
 }  // namespace details

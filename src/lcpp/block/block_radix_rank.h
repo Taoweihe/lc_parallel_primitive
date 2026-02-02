@@ -280,17 +280,17 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
         UInt              warp;
         UInt              lane;
 
-        UInt Digit(Var<UnsignedBits> key)
-        {
-            UInt digit = digit_extractor.Digit(key);
-            return IsDescending ? RADIX_DIGITS - 1 - digit : digit;
-        }
+        // Callable<uint> Digit = [](Var<UnsignedBits> key)
+        // {
+        //     UInt digit = digit_extractor.Digit(key);
+        //     return IsDescending ? RADIX_DIGITS - 1 - digit : digit;
+        // };
 
-        UInt ThreadBin(UInt u)
+        static Callable ThreadBin = [](UInt u)
         {
             UInt bin = thread_id().x * BINS_PER_THREAD + u;
             return IsDescending ? RADIX_DIGITS - 1 - bin : bin;
-        }
+        };
 
         BlockRadixRankMatchInternal(DigitExtractorT digit_extractor, CountsCallback callback)
             : digit_extractor(digit_extractor)
