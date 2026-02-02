@@ -1,6 +1,5 @@
 
-add_requires("boost_ut")
-add_requires("cpptrace")
+add_requires("boost_ut","cpptrace")
 local function add_test_target(file_name)
     target(file_name)
         set_kind("binary")
