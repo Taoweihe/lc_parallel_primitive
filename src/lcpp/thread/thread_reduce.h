@@ -47,4 +47,6 @@ class ThreadReduce : public LuisaModule
         return ThreadReduce<Type4Byte, ITEMS_PER_THREAD + 1>().Reduce(temp, op);
     };
 };
+
+
 }  // namespace luisa::parallel_primitive

@@ -136,10 +136,8 @@ static void get_temp_size_scan(size_t& temp_storage_size, size_t m_block_size, s
 }
 
 
-static inline auto bit_log2(luisa::compute::UInt x)
-{
-    return 31 - luisa::compute::clz(x);
-}
+static inline luisa::compute::Callable bit_log2 = [](luisa::compute::UInt x)
+{ return 31 - luisa::compute::clz(x); };
 
 template <NumericT Type4Byte>
 luisa::compute::Var<Type4Byte> ShuffleUp(luisa::compute::Var<Type4Byte>& input,
@@ -216,17 +214,15 @@ inline luisa::compute::Int conflict_free_offset(luisa::compute::Int i)
     return i >> log_mem_banks;
 }
 
-inline luisa::compute::UInt get_lane_mask_ge(luisa::compute::UInt lane_id, luisa::compute::UInt wave_size)
+static luisa::compute::Callable get_lane_mask_ge = [](luisa::compute::UInt lane_id, luisa::compute::UInt wave_size)
 {
     luisa::compute::ULong mask64 = ~((1ull << lane_id) - 1ull);
     mask64 &= (1ull << wave_size) - 1ull;
     return static_cast<luisa::compute::UInt>(mask64);
-}
+};
 
-inline luisa::compute::UInt get_lane_mask_le(luisa::compute::UInt lane_id)
-{
-    return (1u << (lane_id + 1)) - 1u;
-}
+static luisa::compute::Callable get_lane_mask_le = [](luisa::compute::UInt lane_id)
+{ return (1u << (lane_id + 1)) - 1u; };
 
 template <size_t LOGIC_WARP_SIZE>
 inline luisa::compute::UInt warp_mask(luisa::compute::UInt warp_id)
@@ -243,5 +239,62 @@ inline luisa::compute::UInt warp_mask(luisa::compute::UInt warp_id)
 
     return member_mask;
 }
+
+
+
+namespace details
+{
+    template <int LABEL_BITS, int WARP_ACTIVE_THREADS>
+    struct warp_matcher_t
+    {
+        static compute::UInt match_any(compute::UInt label)
+        {
+            return warp_matcher_t<LABEL_BITS, 32>::match_any(label) & ~(~0 << WARP_ACTIVE_THREADS);
+        }
+    };
+
+    template <int LABEL_BITS>
+    struct warp_matcher_t<LABEL_BITS, details::WARP_SIZE>
+    {
+        // match.any.sync.b32 is slower when matching a few bits
+        // using a ballot loop instead
+        static compute::UInt match_any(compute::UInt label)
+        {
+            compute::UInt retval;
+
+            // Extract masks of common threads for each bit
+            for(auto BIT = 0u; BIT < LABEL_BITS; ++BIT)
+            {
+                compute::UInt current_bit = 1 << BIT;
+                compute::Bool bit_is_set  = (label & current_bit) != 0;
+
+                // get warp active mask for this bit
+                compute::UInt mask = compute::warp_active_bit_mask(bit_is_set).x;
+
+                // if the bit is not set, invert the mask
+                $if(!bit_is_set)
+                {
+                    mask = ~mask;
+                };
+
+                retval &= mask;
+                // Remove peers who differ
+                retval = (BIT == 0) ? mask : retval & mask;
+            }
+
+            return retval;
+        }
+    };
+}  // namespace details
+/**
+ * Compute a 32b mask of threads having the same least-significant
+ * LABEL_BITS of \p label as the calling thread.
+ */
+template <int LABEL_BITS, int WARP_ACTIVE_THREADS = details::WARP_SIZE>
+inline compute::UInt MatchAny(compute::UInt label)
+{
+    return details::warp_matcher_t<LABEL_BITS, WARP_ACTIVE_THREADS>::match_any(label);
+}
+
 
 };  // namespace luisa::parallel_primitive

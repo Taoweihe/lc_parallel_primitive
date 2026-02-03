@@ -164,6 +164,16 @@ namespace details
         friend struct is_primite_impl;
         static constexpr bool is_primitive = true;
     };
+
+
+    template <bool Value>
+    inline constexpr auto bool_constant_v = std::bool_constant<Value>{};
+
+    template <auto Value>
+    using constant_t = std::integral_constant<decltype(Value), Value>;
+
+    template <auto Value>
+    inline constexpr auto constant_v = constant_t<Value>{};
 }  // namespace details
 
 template <Category _CATEGORY, bool _PRIMITIVE, typename _UnsignedBits, typename T>

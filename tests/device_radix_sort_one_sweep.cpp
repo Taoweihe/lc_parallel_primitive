@@ -41,8 +41,9 @@ int main(int argc, char* argv[])
 
     "radix sort"_test = [&]
     {
-        constexpr int32_t   array_size = 1024;
-        luisa::vector<uint> input_data(array_size);
+        using radix_sort_type                     = uint;
+        constexpr int32_t              array_size = 1024;
+        luisa::vector<radix_sort_type> input_data(array_size);
         for(int i = 0; i < array_size; i++)
         {
             input_data[i] = i;
@@ -50,12 +51,21 @@ int main(int argc, char* argv[])
         std::mt19937 rng(114521);  // 固定种子
         std::shuffle(input_data.begin(), input_data.end(), rng);
 
-        auto key_buffer = device.create_buffer<uint>(array_size);
+        auto key_buffer = device.create_buffer<radix_sort_type>(array_size);
         stream << key_buffer.copy_from(input_data.data()) << synchronize();
 
-        auto key_out_buffer = device.create_buffer<uint>(array_size);
-        radixsorter.SortKeys<uint>(
+        auto key_out_buffer = device.create_buffer<radix_sort_type>(array_size);
+        radixsorter.SortKeys<radix_sort_type>(
             cmdlist, stream, key_buffer.view(), key_out_buffer.view(), key_buffer.size());
+
+        luisa::vector<radix_sort_type> result(array_size);
+        stream << key_out_buffer.copy_to(result.data()) << synchronize();
+
+        for(int i = 0; i < array_size; i++)
+        {
+            LUISA_INFO("Key {}: {}", i, result[i]);
+            // expect(result[i] == static_cast<radix_sort_type>(i));
+        }
     };
 
     return 0;

@@ -1,4 +1,3 @@
-
 add_requires("boost_ut","cpptrace")
 local function add_test_target(file_name)
     target(file_name)
@@ -22,6 +21,8 @@ local function add_test_target(file_name)
         on_config(function (target)
             if has_config('lc_use_xrepo') then
                 target:add("runargs", path.join(target:pkg("luisa-compute"):installdir(), "bin"))
+            else 
+                target:add("runargs", path.absolute(target:targetdir()))    
             end
         end)
     target_end()

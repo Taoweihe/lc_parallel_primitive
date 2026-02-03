@@ -124,7 +124,7 @@ namespace details
             UInt pass = 0;
             $for(current_bit, 0u, end_bit, UInt(RADIX_BITS))
             {
-                UInt num_bits = compute::min(+UInt(RADIX_BITS), end_bit - current_bit);
+                UInt num_bits = compute::min(UInt(RADIX_BITS), end_bit - current_bit);
 
                 for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
                 {

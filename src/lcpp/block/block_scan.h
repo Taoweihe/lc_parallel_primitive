@@ -27,12 +27,12 @@ class BlockScan : public LuisaModule
   public:
     BlockScan()
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
         {
             m_shared_mem      = new SmemType<Type4Byte>{BLOCK_SIZE};
             m_block_aggregate = new SmemType<Type4Byte>{1};
         }
-        else if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        else if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
             m_shared_mem = new SmemType<Type4Byte>{BLOCK_SIZE / WARP_SIZE};
         };
@@ -53,12 +53,12 @@ class BlockScan : public LuisaModule
                        Var<Type4Byte>&       block_aggregate,
                        ScanOp                scan_op)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
             details::BlockScanShfl<Type4Byte, BLOCK_SIZE, WARP_SIZE>().ExclusiveScan(
                 m_shared_mem, thread_data, exclusive_output, block_aggregate, scan_op);
         }
-        else if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
+        else if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
         {
         };
     }
@@ -82,12 +82,12 @@ class BlockScan : public LuisaModule
                        const Var<Type4Byte>& initial_value)
     {
 
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
             details::BlockScanShfl<Type4Byte, BLOCK_SIZE, WARP_SIZE>().ExclusiveScan(
                 m_shared_mem, thread_data, exclusive_output, block_aggregate, scan_op, initial_value);
         }
-        else if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
+        else if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
         {
         };
     }
@@ -95,12 +95,12 @@ class BlockScan : public LuisaModule
     template <typename ScanOp, typename BlockPrefixCallbackOp>
     void ExclusiveScan(const Var<Type4Byte>& thread_data, Var<Type4Byte>& exclusive_out, ScanOp scan_op, BlockPrefixCallbackOp prefix_op)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
             details::BlockScanShfl<Type4Byte, BLOCK_SIZE, WARP_SIZE>().ExclusiveScan(
                 m_shared_mem, thread_data, exclusive_out, scan_op, prefix_op);
         }
-        else if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
+        else if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
         {
         };
     }
@@ -132,9 +132,9 @@ class BlockScan : public LuisaModule
                        Var<Type4Byte>&                                       block_aggregate,
                        ScanOp                                                scan_op)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
-            if(ITEMS_PER_THREAD == 1)
+            if constexpr(ITEMS_PER_THREAD == 1)
             {
                 ExclusiveScan(thread_datas[0], exclusive_output[0], block_aggregate, scan_op);
             }
@@ -159,9 +159,9 @@ class BlockScan : public LuisaModule
                        ScanOp                                                scan_op,
                        Var<Type4Byte>                                        initial_value)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
-            if(ITEMS_PER_THREAD == 1)
+            if constexpr(ITEMS_PER_THREAD == 1)
             {
                 ExclusiveScan(thread_datas[0], output_block_sums[0], block_aggregate, scan_op, initial_value);
             }
@@ -186,9 +186,9 @@ class BlockScan : public LuisaModule
                        ScanOp                                                scan_op,
                        BlockPrefixCallbackOp                                 prefix_op)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
-            if(ITEMS_PER_THREAD == 1)
+            if constexpr(ITEMS_PER_THREAD == 1)
             {
                 ExclusiveScan(thread_datas[0], output_block_sums[0], scan_op, prefix_op);
             }
@@ -219,12 +219,12 @@ class BlockScan : public LuisaModule
                        Var<Type4Byte>&       block_aggregate,
                        ScanOp                scan_op)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
             details::BlockScanShfl<Type4Byte, BLOCK_SIZE, WARP_SIZE>().InclusiveScan(
                 m_shared_mem, thread_data, inclusive_out, block_aggregate, scan_op);
         }
-        else if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
+        else if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
         {
         };
     }
@@ -236,12 +236,12 @@ class BlockScan : public LuisaModule
                        ScanOp                scan_op,
                        Var<Type4Byte>        initial_value)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
             details::BlockScanShfl<Type4Byte, BLOCK_SIZE, WARP_SIZE>().InclusiveScan(
                 m_shared_mem, thread_data, inclusive_out, block_aggregate, scan_op, initial_value);
         }
-        else if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
+        else if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
         {
         };
     }
@@ -250,12 +250,12 @@ class BlockScan : public LuisaModule
     template <typename ScanOp, typename BlockPrefixCallbackOp>
     void InclusiveScan(const Var<Type4Byte>& thread_data, Var<Type4Byte>& inclusive_out, ScanOp scan_op, BlockPrefixCallbackOp prefix_op)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
             details::BlockScanShfl<Type4Byte, BLOCK_SIZE, WARP_SIZE>().InclusiveScan(
                 m_shared_mem, thread_data, inclusive_out, scan_op, prefix_op);
         }
-        else if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
+        else if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::SHARED_MEMORY)
         {
         };
     }
@@ -275,9 +275,9 @@ class BlockScan : public LuisaModule
                        Var<Type4Byte>&                                       block_aggregate,
                        ScanOp                                                scan_op)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
-            if(ITEMS_PER_THREAD == 1)
+            if constexpr(ITEMS_PER_THREAD == 1)
             {
                 InclusiveScan(thread_datas[0], inclusive_out[0], block_aggregate, scan_op);
             }
@@ -303,9 +303,9 @@ class BlockScan : public LuisaModule
                        ScanOp                                                scan_op,
                        Var<Type4Byte>                                        initial_value)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
-            if(ITEMS_PER_THREAD == 1)
+            if constexpr(ITEMS_PER_THREAD == 1)
             {
                 InclusiveScan(thread_datas[0], output_block_sums[0], block_aggregate, scan_op, initial_value);
             }
@@ -329,9 +329,9 @@ class BlockScan : public LuisaModule
                        ScanOp                                                scan_op,
                        BlockPrefixCallbackOp                                 prefix_op)
     {
-        if(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
+        if constexpr(DEFALUTE_ALGORITHNM == BlockScanAlgorithm::WARP_SHUFFLE)
         {
-            if(ITEMS_PER_THREAD == 1)
+            if constexpr(ITEMS_PER_THREAD == 1)
             {
                 InclusiveScan(thread_datas[0], output_block_sums[0], scan_op, prefix_op);
             }

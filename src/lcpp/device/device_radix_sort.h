@@ -155,22 +155,22 @@ class DeviceRadixSort : public LuisaModule
 
         stream << cmdlist.commit() << synchronize();
 
-        // luisa::vector<uint> host_bins(d_bins_buffer.size());
-        // stream << d_bins_buffer.copy_to(host_bins.data()) << synchronize();
-        // for(auto i = 0; i < num_passes; ++i)
-        // {
-        //     LUISA_INFO("Pass {}", i);
-        //     for(auto j = 0; j < RADIX_DIGITS; ++j)
-        //     {
-        //         uint sum = 0;
-        //         for(auto p = 0; p < num_portions; ++p)
-        //         {
-        //             auto index = i * RADIX_DIGITS * num_portions + j * num_portions + p;
-        //             sum += host_bins[index];
-        //         }
-        //         LUISA_INFO("  Bin {}: {}", j, sum);
-        //     }
-        // }
+        luisa::vector<uint> host_bins(d_bins_buffer.size());
+        stream << d_bins_buffer.copy_to(host_bins.data()) << synchronize();
+        for(auto i = 0; i < num_passes; ++i)
+        {
+            LUISA_INFO("Pass {}", i);
+            for(auto j = 0; j < RADIX_DIGITS; ++j)
+            {
+                uint sum = 0;
+                for(auto p = 0; p < num_portions; ++p)
+                {
+                    auto index = i * RADIX_DIGITS * num_portions + j * num_portions + p;
+                    sum += host_bins[index];
+                }
+                LUISA_INFO("  Bin {}: {}", j, sum);
+            }
+        }
 
 
         // exclusive scan
@@ -195,21 +195,21 @@ class DeviceRadixSort : public LuisaModule
 
         //show
         // luisa::vector<uint> host_bins(d_bins_sum_buffer.size());
-        // stream << d_bins_sum_buffer.copy_to(host_bins.data()) << synchronize();
-        // for(auto i = 0; i < num_passes; ++i)
-        // {
-        //     LUISA_INFO("Pass {}", i);
-        //     for(auto j = 0; j < RADIX_DIGITS; ++j)
-        //     {
-        //         uint sum = 0;
-        //         for(auto p = 0; p < num_portions; ++p)
-        //         {
-        //             auto index = i * RADIX_DIGITS * num_portions + j * num_portions + p;
-        //             sum += host_bins[index];
-        //         }
-        //         LUISA_INFO("  Bin {}: {}", j, sum);
-        //     }
-        // }
+        stream << d_bins_sum_buffer.copy_to(host_bins.data()) << synchronize();
+        for(auto i = 0; i < num_passes; ++i)
+        {
+            LUISA_INFO("Pass {}", i);
+            for(auto j = 0; j < RADIX_DIGITS; ++j)
+            {
+                uint sum = 0;
+                for(auto p = 0; p < num_portions; ++p)
+                {
+                    auto index = i * RADIX_DIGITS * num_portions + j * num_portions + p;
+                    sum += host_bins[index];
+                }
+                LUISA_INFO("  Bin {}: {}", j, sum);
+            }
+        }
 
         // one sweep
         auto d_keys_tmp = d_keys.alternate();

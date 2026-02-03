@@ -5,7 +5,6 @@
  * @Last Modified time: 2025-11-14 11:23:14
  */
 #pragma once
-#include <array>
 #include <luisa/dsl/builtin.h>
 #include <luisa/dsl/func.h>
 #include <luisa/dsl/var.h>
@@ -31,236 +30,52 @@ enum WarpMatchAlgorithm
     WARP_MATCH_ATOMIC_OR
 };
 using namespace luisa::compute;
-// template <uint               RadixBits,
-//           bool               IsDescending,
-//           bool               MemoizeOuterScan  = true,
-//           size_t             BLOCK_SIZE        = details::BLOCK_SIZE,
-//           size_t             ITEMS_PER_THREAD  = details::ITEMS_PER_THREAD,
-//           size_t             WARP_SIZE         = details::WARP_SIZE,
-//           RadixRankAlgorithm DEFAULT_ALGORITHM = RadixRankAlgorithm::WARP_SHUFFLE>
-// class BlockRadixRank : public LuisaModule
-// {
-//   private:
-//     using DigitCounter = ushort;
-//     // Integer type for packing DigitCounters into columns of shared memory banks
-//     using PackedCounter = uint;
 
-//     static constexpr DigitCounter max_tile_size = std::numeric_limits<DigitCounter>::max();
+// empty callback
+template <int BINS_PER_THREAD>
+struct BlockRadixRankEmptyCallback
+{
+    inline void operator()(const ArrayVar<int, BINS_PER_THREAD>&) {}
+};
 
-//     static constexpr uint RADIX_DIGITS = 1 << RadixBits;
+namespace details
+{
+    template <int Bits, int PartialWarpThreads, int PartialWarpId>
+    struct warp_in_block_matcher_t
+    {
+        inline static Callable match_any = [](UInt label, UInt warp_id)
+        {
+            $if(warp_id == UInt(PartialWarpId))
+            {
+                return MatchAny<Bits, PartialWarpThreads>(label);
+            };
 
-//     static constexpr uint WARPS = (BLOCK_SIZE + WARP_SIZE - 1) / WARP_SIZE;
+            return MatchAny<Bits>(label);
+        };
+    };
 
-//     static constexpr uint BYTES_PER_COUNTER = uint(sizeof(DigitCounter));
-//     // static constexpr uint LOG_BYTES_PER_COUNTER =
-//     // Log2<BYTES_PER_COUNTER>::VALUE;
-
-//     static constexpr uint PACKING_RATIO = static_cast<uint>(sizeof(PackedCounter) / sizeof(DigitCounter));
-//     static constexpr uint LOG_PACKING_RATIO = Log2<PACKING_RATIO>::VALUE;
-
-//     // Always at least one lane
-//     static constexpr uint LOG_COUNTER_LANES = std::max(RadixBits - LOG_PACKING_RATIO, 0);
-//     static constexpr uint COUNTER_LANES     = 1 << LOG_COUNTER_LANES;
-
-//     // The number of packed counters per thread (plus one for padding)
-//     static constexpr uint PADDED_COUNTER_LANES = COUNTER_LANES + 1;
-//     static constexpr uint RAKING_SEGMENT       = PADDED_COUNTER_LANES;
-
-//     static_assert(PADDED_COUNTER_LANES * PACKING_RATIO == RAKING_SEGMENT,
-//                   "PADDL_COUNTER_LANES * PACKING_RATIO = RAKING_SEGMENT");
-
-//     struct PrefixCallBack
-//     {
-//         Var<PackedCounter> operator()(const Var<PackedCounter>& block_aggregate)
-//         {
-//             Var<PackedCounter> block_prefix = 0;
-
-//             // Propagate totals in packed fields
-//             for(auto PACKED = 1u; PACKED < PACKING_RATIO; PACKED++)
-//             {
-//                 block_prefix += block_aggregate << Var<PackedCounter>((sizeof(DigitCounter) * 8 * PACKED));
-//             }
-
-//             return block_prefix;
-//         }
-//     };
-
-//     static Callable pack_digit_counters = [](const ArrayVar<DigitCounter, PACKING_RATIO>& dc)
-//     {
-//         static_assert(sizeof(PackedCounter) == sizeof(DigitCounter) * PACKING_RATIO, "PACKING_RATIO mismatch.");
-
-//         Var<PackedCounter> p = 0u;
-//         for(uint i = 0; i < PACKING_RATIO; i++)
-//         {
-//             p |= (Var<PackedCounter>(dc[i]) << Var<PackedCounter>(8u * sizeof(DigitCounter) * i));
-//         }
-//         return p;
-//     };
+    template <int Bits, int PartialWarpId>
+    struct warp_in_block_matcher_t<Bits, 0, PartialWarpId>
+    {
+        inline static Callable match_any = [](UInt label, UInt warp_id)
+        { return MatchAny<Bits>(label); };
+    };
+}  // namespace details
 
 
-//     static Callable unpack_digit_counters = [](Var<PackedCounter> p, ArrayVar<DigitCounter, PACKING_RATIO>& dc)
-//     {
-//         for(uint i = 0; i < PACKING_RATIO; i++)
-//         {
-//             dc[i] = Var<DigitCounter>((p >> (8u * sizeof(DigitCounter) * i))
-//                                       & ((Var<DigitCounter>(1) << (8u * sizeof(DigitCounter))) - 1));
-//         }
-//     };
-
-//     static Callable digit_index = [](UInt i, UInt j, UInt k)
-//     { return i * UInt(BLOCK_SIZE * PACKING_RATIO) + j * UInt(PACKING_RATIO) + k; };
-
-//     static Callable packed_index = [](UInt i, UInt j) { return i * UInt(BLOCK_SIZE) + j; };
-
-//   public:
-//     static constexpr uint BINS_TRACKED_PER_THREAD = std::max(1, (RADIX_DIGITS + BLOCK_SIZE - 1) / BLOCK_SIZE);
-
-//   public:
-//     BlockRadixRank()
-//     {
-//         // Allocate shared memory for digit counters
-//         m_shared_digit_counters = new SmemType<DigitCounter>{PADDED_COUNTER_LANES * BLOCK_SIZE * PACKING_RATIO};
-//         // row major layout
-//         m_linear_tid = thread_id().z * (block_size_x() * block_size_y())
-//                        + thread_id().y * block_size_x() + thread_id().x;
-//     }
-//     ~BlockRadixRank() = default;
-
-//   public:
-//     template <typename UnsignedBits, uint KEY_PER_THREAD, typename DigitExtractorT>
-//     void RankKeys(const compute::ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys,
-//                   compute::ArrayVar<uint, KEY_PER_THREAD>&               ranks,
-//                   DigitExtractorT                                        digit_extractor)
-//     {
-//         static_assert(BLOCK_SIZE * KEY_PER_THREAD <= max_tile_size,
-//                       "DigitCounter type is too small to hold this number of keys.");
-
-//         ArrayVar<DigitCounter, KEY_PER_THREAD> thread_prefixes;
-//         ArrayVar<DigitCounter, KEY_PER_THREAD> digit_counters;
-
-//         ResetCounters();
-
-//         for(auto item = 0u; item < KEY_PER_THREAD; ++item)
-//         {
-//             UInt digit = digit_extractor.Digit(keys[item]);
-
-//             UInt sub_counter = digit >> LOG_COUNTER_LANES;
-
-//             UInt counter_lane = digit & (COUNTER_LANES - 1);
-
-//             if constexpr(IsDescending)
-//             {
-//                 sub_counter  = (RADIX_DIGITS - 1) - sub_counter;
-//                 counter_lane = (COUNTER_LANES - 1) - counter_lane;
-//             }
-
-//             // Pointer to smem digit counter
-//             digit_counters =
-//                 m_shared_digit_counters->read(digit_index(counter_lane, m_linear_tid, sub_counter));
-
-//             thread_prefixes[item] = digit_counters[item];
-//             digit_counters[item]  = thread_prefixes[item] + 1;
-//         }
-
-//         sync_block();
-//         ScanCounters();
-//         sync_block();
-
-//         // Extract the local ranks of each key
-//         for(auto item = 0u; item < KEY_PER_THREAD; ++item)
-//         {
-//             // Add in thread block exclusive prefix
-//             ranks[item] = thread_prefixes[item] + digit_counters[item];
-//         }
-//     }
-
-//     template <typename UnsignedBits, uint KEY_PER_THREAD, typename DigitExtractorT>
-//     void RankKeys(const compute::ArrayVar<UnsignedBits, ITEMS_PER_THREAD>& keys,
-//                   compute::ArrayVar<uint, ITEMS_PER_THREAD>&               ranks,
-//                   DigitExtractorT                                          digit_extractor,
-//                   compute::ArrayVar<uint, ITEMS_PER_THREAD>&               exclusive_digit_prefix)
-//     {
-//     }
-
-//   private:
-//     void ResetCounters()
-//     {
-//         // Reset shared memory digit counters
-//         for(auto LANE = 0u; LANE < PADDED_COUNTER_LANES; ++LANE)
-//         {
-//             for(auto PACKED = 0u; PACKED < PACKING_RATIO; ++PACKED)
-//             {
-//                 UInt offset = digit_index(LANE, m_linear_tid, PACKED);
-//                 m_shared_digit_counters->write(offset, 0u);
-//             }
-//         }
-//     }
-
-//     void UpSweep()
-//     {
-//         ArrayVar<PackedCounter, RAKING_SEGMENT> thread_counters;
-
-//         for(auto i = 0u; i < RAKING_SEGMENT; ++i)
-//         {
-//             ArrayVar<DigitCounter, PACKING_RATIO> dc;
-//             for(auto j = 0u; j < PACKING_RATIO; ++j)
-//             {
-//                 dc[j] = m_shared_digit_counters->read(digit_index(i, m_linear_tid, j));
-//             }
-
-//             thread_counters[i] = pack_digit_counters(dc);
-//         }
-
-//         return ThreadReduce<PackedCounter, RAKING_SEGMENT>().Reduce(
-//             thread_counters,
-//             [](const Var<PackedCounter>& a, const Var<PackedCounter>& b) { return a + b; });
-//     }
-
-//     void ExclusiveDownsweep(Var<PackedCounter>& exclusive_partial)
-//     {
-
-//         ArrayVar<PackedCounter, RAKING_SEGMENT> smem_ranking;
-//         // details::Thread
-//     }
-
-//     void ScanCounters()
-//     {
-//         Var<PackedCounter> raking_partial = UpSweep();
-//         Var<PackedCounter> exclusive_partial;
-//         PrefixCallBack     prefix_call_back;
-//         BlockScan<PackedCounter, BLOCK_SIZE, 1, WARP_SIZE>().ExclusiveSum(raking_partial, exclusive_partial, prefix_call_back);
-
-//         // Downsweep scan with exclusive partial
-//         ExclusiveDownsweep(exclusive_partial);
-//     }
-
-
-//   private:
-//     // DigitCounter        digit_counters[PADDED_COUNTER_LANES][BLOCK_THREADS][PACKING_RATIO];
-//     // PackedCounter       raking_grid[BLOCK_THREADS][RAKING_SEGMENT];
-//     // PADDEL_COUNTER_LANES * PACKING_RATIO = RAKING_SEGMENT
-//     SmemTypePtr<DigitCounter> m_shared_digit_counters;
-//     /// Linear thread-id
-//     UInt m_linear_tid;
-// };
-
-
-template <uint BLOCK_THREADS, uint RadixBits, bool IsDescending, WarpMatchAlgorithm MATCH_ALGORITHM = WARP_MATCH_ANY, int NUM_PARTS = 1, uint WARP_SIZE = details::WARP_SIZE>
+template <uint BLOCK_THREADS, uint RadixBits, bool IsDescending, WarpMatchAlgorithm MATCH_ALGORITHM = WARP_MATCH_ANY, uint NUM_PARTS = 1, uint WARP_SIZE = details::WARP_SIZE>
 class BlockRadixRankMatchEarlyCounts : public LuisaModule
 {
-    static constexpr int RADIX_DIGITS    = 1 << RadixBits;
-    static constexpr int BINS_PER_THREAD = (RADIX_DIGITS + BLOCK_THREADS - 1) / BLOCK_THREADS;
-    static constexpr int BINS_TRACKED_PER_THREAD = BINS_PER_THREAD;
-    static constexpr int FULL_BINS               = BINS_PER_THREAD * BLOCK_THREADS == RADIX_DIGITS;
-    static constexpr int PARTIAL_WARP_THREADS    = BLOCK_THREADS % WARP_SIZE;
-    static constexpr int BLOCK_WARPS             = BLOCK_THREADS / WARP_SIZE;
-    static constexpr int PARTIAL_WARP_ID         = BLOCK_WARPS - 1;
-    static constexpr int WARP_MASK               = ~0;
-    static constexpr int NUM_MATCH_MASKS = MATCH_ALGORITHM == WARP_MATCH_ATOMIC_OR ? BLOCK_WARPS : 0;
-    static constexpr int MATCH_MASKS_ALLOC_SIZE = NUM_MATCH_MASKS < 1 ? 1 : NUM_MATCH_MASKS;
-
-    // types
-    // using BlockScan = cub::BlockScan<int, BLOCK_THREADS, InnerScanAlgorithm>;
+    static constexpr uint RADIX_DIGITS    = 1 << RadixBits;
+    static constexpr uint BINS_PER_THREAD = (RADIX_DIGITS + BLOCK_THREADS - 1) / BLOCK_THREADS;
+    static constexpr uint BINS_TRACKED_PER_THREAD = BINS_PER_THREAD;
+    static constexpr bool FULL_BINS               = BINS_PER_THREAD * BLOCK_THREADS == RADIX_DIGITS;
+    static constexpr uint PARTIAL_WARP_THREADS    = BLOCK_THREADS % WARP_SIZE;
+    static constexpr uint BLOCK_WARPS             = BLOCK_THREADS / WARP_SIZE;
+    static constexpr uint PARTIAL_WARP_ID         = BLOCK_WARPS - 1;
+    static constexpr uint WARP_MASK               = ~0;
+    static constexpr uint NUM_MATCH_MASKS = MATCH_ALGORITHM == WARP_MATCH_ATOMIC_OR ? BLOCK_WARPS : 0;
+    static constexpr uint MATCH_MASKS_ALLOC_SIZE = NUM_MATCH_MASKS < 1 ? 1 : NUM_MATCH_MASKS;
 
   public:
     BlockRadixRankMatchEarlyCounts() {}
@@ -269,89 +84,242 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
     template <typename UnsignedBits, uint KEY_PER_THREAD, typename DigitExtractorT, typename CountsCallback>
     struct BlockRadixRankMatchInternal
     {
-        // union
-        // {
-        //     int warp_offsets[BLOCK_WARPS][RADIX_DIGITS];
-        //     int warp_histograms[BLOCK_WARPS][RADIX_DIGITS][NUM_PARTS];
-        // };
+        SmemTypePtr<uint> warp_offsets;
         SmemTypePtr<uint> warp_histograms;
+        SmemTypePtr<uint> match_masks;
         DigitExtractorT   digit_extractor;
         CountsCallback    counts_callback;
         UInt              warp;
         UInt              lane;
 
-        // Callable<uint> Digit = [](Var<UnsignedBits> key)
-        // {
-        //     UInt digit = digit_extractor.Digit(key);
-        //     return IsDescending ? RADIX_DIGITS - 1 - digit : digit;
-        // };
+        BlockRadixRankMatchInternal(DigitExtractorT digit_extractor, CountsCallback callback)
+            : digit_extractor(digit_extractor)
+            , counts_callback(callback)
+            , warp(thread_id().x / WARP_SIZE)
+            , lane(warp_lane_id())
+        {
+            warp_offsets    = new SmemType<uint>(BLOCK_WARPS * RADIX_DIGITS);
+            warp_histograms = new SmemType<uint>(BLOCK_WARPS * RADIX_DIGITS * NUM_PARTS);
+            match_masks     = new SmemType<uint>(MATCH_MASKS_ALLOC_SIZE * RADIX_DIGITS);
+        }
 
-        inline static Callable ThreadBin = [](UInt u)
+
+        UInt Digit(Var<UnsignedBits> key)
+        {
+            UInt digit = digit_extractor.Digit(key);
+            return IsDescending ? RADIX_DIGITS - 1 - digit : digit;
+        };
+
+        inline static Callable ThreadBin = [](UInt u) -> UInt
         {
             UInt bin = thread_id().x * BINS_PER_THREAD + u;
             return IsDescending ? RADIX_DIGITS - 1 - bin : bin;
         };
 
-        BlockRadixRankMatchInternal(DigitExtractorT digit_extractor, CountsCallback callback)
-            : digit_extractor(digit_extractor)
-            , counts_callback(callback)
-            , warp(thread_id().x / UInt(WARP_SIZE))
-            , lane(warp_lane_id())
-        {
-        }
-
         void ComputeHistogramWarp(const ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys)
         {
-            // ArrayVar<uint, RADIX_DIGITS * NUM_PARTS> warp_histograms;
             $for(bin, lane, UInt(RADIX_DIGITS), UInt(WARP_SIZE))
             {
                 for(auto part = 0u; part < NUM_PARTS; ++part)
                 {
-                    warp_histograms->write(warp * UInt(RADIX_DIGITS) * UInt(NUM_PARTS)
-                                               + bin * UInt(NUM_PARTS) + UInt(part),
-                                           0u);
+                    warp_histograms->write(warp * RADIX_DIGITS * NUM_PARTS + UInt(bin) * NUM_PARTS + part, 0);
                 }
             };
 
-            // TODO: sync_warp();
+            if constexpr(MATCH_ALGORITHM == WARP_MATCH_ATOMIC_OR)
+            {
+                $for(bin, lane, UInt(RADIX_DIGITS), UInt(WARP_SIZE))
+                {
+                    match_masks->write(bin, 0u);
+                };
+            }
+
+            // // TODO: sync_warp(WARP_MASK);
             sync_block();
 
             for(auto i = 0u; i < KEY_PER_THREAD; ++i)
             {
                 UInt bin   = Digit(keys[i]);
-                UInt index = warp * UInt(RADIX_DIGITS) * UInt(NUM_PARTS) + bin * UInt(NUM_PARTS)
-                             + (lane % UInt(NUM_PARTS));
+                UInt index = warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS + (lane % NUM_PARTS);
                 warp_histograms->atomic(index).fetch_add(1u);
+            }
+
+
+            if constexpr(NUM_PARTS > 1)
+            {
+                // // TODO: sync_warp(WARP_MASK);
+                sync_block();
+                // TODO: handle RADIX_DIGITS % WARP_THREADS != 0 if it becomes necessary
+                constexpr uint WARP_BINS_PER_THREAD = RADIX_DIGITS / WARP_SIZE;
+
+                ArrayVar<uint, WARP_BINS_PER_THREAD> local_bins;
+
+                for(auto u = 0u; u < WARP_BINS_PER_THREAD; ++u)
+                {
+                    UInt                      bin = lane + u * WARP_SIZE;
+                    ArrayVar<uint, NUM_PARTS> bin_counts;
+                    for(auto part = 0u; part < NUM_PARTS; ++part)
+                    {
+                        bin_counts[part] =
+                            warp_histograms->read(warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS + part);
+                    }
+
+                    local_bins[u] = ThreadReduce<uint, NUM_PARTS>().Reduce(
+                        bin_counts, [](const UInt& a, const UInt& b) { return a + b; });
+                }
+
+                sync_block();
+
+                for(auto u = 0u; u < WARP_BINS_PER_THREAD; ++u)
+                {
+                    UInt bin = lane + u * WARP_SIZE;
+                    warp_histograms->write(warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS, local_bins[u]);
+                }
             }
         }
 
+        void ComputeOffsetsWarpUpSweep(ArrayVar<uint, BINS_PER_THREAD>& bins)
+        {
+            for(auto u = 0u; u < BINS_PER_THREAD; ++u)
+            {
+                bins[u]  = 0;
+                UInt bin = ThreadBin(u);
+                $if(FULL_BINS | bin < UInt(RADIX_DIGITS))
+                {
+                    for(auto j_warp = 0u; j_warp < BLOCK_WARPS; ++j_warp)
+                    {
+                        auto warp_offset = warp_offsets->read(j_warp * RADIX_DIGITS + bin);
+                        warp_offsets->write(j_warp * RADIX_DIGITS + bin, bins[u]);
+                        bins[u] += warp_offset;
+                    }
+                };
+            }
+        }
+
+        void ComputeOffsetsWarpDownSweep(const ArrayVar<uint, BINS_PER_THREAD>& offsets)
+        {
+            UInt warp_offset = 0;
+            for(auto u = 0u; u < BINS_PER_THREAD; ++u)
+            {
+                UInt bin = ThreadBin(u);
+                $if(FULL_BINS | bin < RADIX_DIGITS)
+                {
+                    UInt digit_offset = offsets[u];
+                    for(auto j_warp = 0u; j_warp < BLOCK_WARPS; ++j_warp)
+                    {
+                        warp_offsets->write(j_warp * RADIX_DIGITS + bin, digit_offset);
+                    }
+                };
+            };
+        }
+
+        void ComputeRanksItem(const ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys,
+                              ArrayVar<uint, KEY_PER_THREAD>&               ranks)
+        {
+            UInt lane_mask = 1u << lane;
+
+            for(auto u = 0u; u < KEY_PER_THREAD; ++u)
+            {
+                UInt bin = Digit(keys[u]);
+
+                match_masks->atomic(bin).fetch_or(lane_mask);
+
+                // TODO: sync_warp(WARP_MASK);
+                sync_block();
+                UInt bin_mask    = match_masks->read(bin);
+                UInt leader      = (WARP_SIZE - 1) - luisa::compute::clz(bin_mask);
+                UInt warp_offset = 0;
+                UInt popc        = popcount(bin_mask & get_lane_mask_le(lane));
+
+                $if(lane == leader)
+                {
+                    // warp_offset
+                    warp_offset = warp_offsets->atomic(warp * RADIX_DIGITS + UInt(bin)).fetch_add(popc);
+                };
+                warp_offset = warp_read_lane(warp_offset, leader);
+
+                $if(lane == leader)
+                {
+                    match_masks->write(bin, 0u);
+                };
+
+                // TODO: sync_warp(WARP_MASK);
+                sync_block();
+                ranks[u] = warp_offset + popc - 1;
+            }
+        }
+
+        void ComputeRanksItem(const ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys,
+                              ArrayVar<uint, KEY_PER_THREAD>&               ranks,
+                              details::constant_t<WARP_MATCH_ANY>)
+        {
+            for(auto u = 0u; u < KEY_PER_THREAD; ++u)
+            {
+                UInt bin = Digit(keys[u]);
+
+                UInt bin_mask =
+                    details::warp_in_block_matcher_t<RadixBits, PARTIAL_WARP_THREADS, PARTIAL_WARP_ID - 1>::match_any(
+                        bin, warp);
+                UInt leader      = (WARP_SIZE - 1) - luisa::compute::clz(bin_mask);
+                UInt warp_offset = 0;
+                UInt popc        = popcount(bin_mask & get_lane_mask_le(lane));
+
+                $if(lane == leader)
+                {
+                    // warp_offset
+                    warp_offset = warp_offsets->atomic(warp * UInt(RADIX_DIGITS) + UInt(bin)).fetch_add(popc);
+                };
+                // __shfl_sync = warp_read_lane
+                warp_offset = warp_read_lane(warp_offset, leader);
+                ranks[u]    = warp_offset + popc - 1;
+            }
+        }
+
+
         void RankKeys(const ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys,
                       ArrayVar<uint, KEY_PER_THREAD>&               ranks,
-                      ArrayVar<uint, BINS_TRACKED_PER_THREAD>&      exclusive_digit_prefix)
+                      compute::ArrayVar<uint, BINS_PER_THREAD>&     exclusive_digit_prefix)
         {
-            // TODO implement radix rank with early counts
-        }
+            ComputeHistogramWarp(keys);
+
+            sync_block();
+
+            ArrayVar<uint, BINS_PER_THREAD> bins;
+            ComputeOffsetsWarpUpSweep(bins);
+
+            counts_callback(bins);
+
+            BlockScan<uint>().ExclusiveSum(bins, exclusive_digit_prefix);
+
+            ComputeOffsetsWarpDownSweep(exclusive_digit_prefix);
+            // sync_block();
+            ComputeRanksItem(keys, ranks, details::constant_v<MATCH_ALGORITHM>);
+        };
     };
 
 
-  public:
     template <typename UnsignedBits, uint KEY_PER_THREAD, typename DigitExtractorT, typename CountsCallback>
     void RankKeys(const compute::ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys,
                   compute::ArrayVar<uint, KEY_PER_THREAD>&               ranks,
                   DigitExtractorT                                        digit_extractor,
-                  compute::ArrayVar<uint, BINS_TRACKED_PER_THREAD>&      exclusive_digit_prefix,
+                  compute::ArrayVar<uint, BINS_PER_THREAD>&              exclusive_digit_prefix,
                   CountsCallback                                         counts_callback)
     {
-        // TODO implement radix rank
+        BlockRadixRankMatchInternal<UnsignedBits, KEY_PER_THREAD, DigitExtractorT, CountsCallback> internal(
+            digit_extractor, counts_callback);
+        internal.RankKeys(keys, ranks, exclusive_digit_prefix);
     }
 
     template <typename UnsignedBits, uint KEY_PER_THREAD, typename DigitExtractorT>
     void RankKeys(const compute::ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys,
                   compute::ArrayVar<uint, KEY_PER_THREAD>&               ranks,
                   DigitExtractorT                                        digit_extractor,
-                  compute::ArrayVar<uint, BINS_TRACKED_PER_THREAD>&      exclusive_digit_prefix)
+                  compute::ArrayVar<uint, BINS_PER_THREAD>&              exclusive_digit_prefix)
     {
-        // TODO implement radix rank with exclusive prefix
+        using CountsCallback = BlockRadixRankEmptyCallback<BINS_PER_THREAD>;
+        BlockRadixRankMatchInternal<UnsignedBits, KEY_PER_THREAD, DigitExtractorT, CountsCallback> internal(
+            digit_extractor, CountsCallback());
+        internal.RankKeys(keys, ranks, exclusive_digit_prefix);
     }
 
     template <typename UnsignedBits, uint KEY_PER_THREAD, typename DigitExtractorT>
@@ -359,7 +327,7 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
                   compute::ArrayVar<uint, KEY_PER_THREAD>&               ranks,
                   DigitExtractorT                                        digit_extractor)
     {
-        compute::ArrayVar<uint, BINS_TRACKED_PER_THREAD> exclusive_digit_prefix;
+        compute::ArrayVar<int, BINS_PER_THREAD> exclusive_digit_prefix;
         RankKeys(keys, ranks, digit_extractor, exclusive_digit_prefix);
     }
 };

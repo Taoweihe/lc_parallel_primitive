@@ -68,8 +68,8 @@ namespace details
 
         using BlockRadixRankT = BlockRadixRankMatchEarlyCounts<BLOCK_SIZE, RADIX_BITS, IS_DESCENDING>;
 
-        static inline Callable ThreadBin = [](UInt u)
-        { return thread_id().x * UInt(BINS_PER_THREAD) + u; };
+        static inline Callable ThreadBin = [](UInt u) -> UInt
+        { return thread_id().x * BINS_PER_THREAD + u; };
 
         struct CountsCallback
         {
@@ -79,7 +79,6 @@ namespace details
             AgentT&                                       agent;
             ArrayVar<uint, BINS_PER_THREAD>&              bins;
             ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys;
-            static constexpr bool                         EMPTY = false;
             CountsCallback(AgentT&                                       agent,
                            ArrayVar<uint, BINS_PER_THREAD>&              bins,
                            ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys)
@@ -90,7 +89,7 @@ namespace details
             }
             void operator()(const ArrayVar<uint, BINS_PER_THREAD>& other_bins)
             {
-                for(auto u = 0; u < BINS_PER_THREAD; ++u)
+                for(auto u = 0u; u < BINS_PER_THREAD; ++u)
                 {
                     bins[u] = other_bins[u];
                 }
@@ -109,8 +108,8 @@ namespace details
                                BufferVar<ValueType>& values_in,
                                BufferVar<ValueType>& values_out,
                                UInt                  num_items,
-                               UInt                  begin_bit,
-                               UInt                  end_bit)
+                               UInt                  current_bit,
+                               UInt                  num_bits)
             : d_lookback(d_lookback)
             , d_ctrs(d_ctrs)
             , d_bins_in(d_bins_in)
@@ -120,8 +119,10 @@ namespace details
             , d_values_in(values_in)
             , d_values_out(values_out)
             , num_items(num_items)
-            , begin_bit(begin_bit)
-            , end_bit(end_bit)
+            , current_bit(current_bit)
+            , num_bits(num_bits)
+            , warp(thread_id().x / UInt(WARP_SIZE))
+            , lane_id(warp_lane_id())
         {
             m_shared_keys      = new SmemType<bit_ordered_type>(TILE_ITEMS);
             m_shared_block_idx = new SmemType<uint>(1);
@@ -140,20 +141,19 @@ namespace details
 
         void LoadKeys(UInt tile_offset, ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys)
         {
-            ArrayVar<KeyType, ITEMS_PER_THREAD> temp_keys;
             $if(full_block)
             {
-                LoadDirectWarpStriped(thread_id().x, d_keys_in, tile_offset, temp_keys);
+                LoadDirectWarpStriped(thread_id().x, d_keys_in, tile_offset, keys);
             }
             $else
             {
                 LoadDirectWarpStriped(
-                    thread_id().x, d_keys_in, tile_offset, temp_keys, num_items - tile_offset, Twiddle::DefaultKey());
+                    thread_id().x, d_keys_in, tile_offset, keys, num_items - tile_offset, Twiddle::DefaultKey());
             };
 
             for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
             {
-                keys[i] = Twiddle::In(Var<bit_ordered_type>(temp_keys[i]));
+                keys[i] = Twiddle::In(Var<bit_ordered_type>(keys[i]));
             }
         }
 
@@ -225,33 +225,35 @@ namespace details
             for(auto i = 0u; i < BINS_PER_THREAD; ++i)
             {
                 UInt bin = ThreadBin(i);
-                $if(FULL_BINS | bin < UInt(RADIX_DIGITS))
+                $if(FULL_BINS | bin < RADIX_DIGITS)
                 {
-                    UInt value = bins[i] | UInt(LOOKBACK_PARTIAL_MASK);
-                    d_lookback.volatile_write(block_idx * UInt(RADIX_DIGITS) + bin, value);
+                    UInt value = bins[i] | LOOKBACK_PARTIAL_MASK;
+                    d_lookback.volatile_write(block_idx * RADIX_DIGITS + bin, value);
                 };
             }
         }
 
-        void TryShortCircuit(const ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys,
-                             const ArrayVar<uint, BINS_PER_THREAD>&              bins)
+        void TryShortCircuit(ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys,
+                             ArrayVar<uint, BINS_PER_THREAD>&              bins)
         {
             // check if any bins can be short-circuited
-            UInt short_circuit = 1;
+            UInt short_circuit = 0u;
 
             for(auto i = 0u; i < BINS_PER_THREAD; ++i)
             {
-                $if(FULL_BINS | ThreadBin(i) < UInt(RADIX_DIGITS))
+                $if(FULL_BINS | ThreadBin(i) < RADIX_DIGITS)
                 {
-                    short_circuit = short_circuit || bins[i] == UInt(TILE_ITEMS);
+                    short_circuit = short_circuit | select(0u, 1u, bins[i] == TILE_ITEMS);
                 };
             }
 
             short_circuit = warp_active_bit_or(short_circuit);
-            $if(!short_circuit)
+            $if(short_circuit != 0u)
             {
                 return;
             };
+
+            ShortCircuitCopy(keys, bins);
         }
 
 
@@ -260,7 +262,7 @@ namespace details
             for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
             {
                 UInt bin = ThreadBin(i);
-                $if(FULL_BINS | bin < UInt(RADIX_DIGITS))
+                $if(FULL_BINS | bin < RADIX_DIGITS)
                 {
                     m_global_offsets->write(bin, d_bins_in.read(bin) - offsets[i]);
                 };
@@ -272,7 +274,7 @@ namespace details
             for(auto u = 0u; u < BINS_PER_THREAD; ++u)
             {
                 UInt bin = ThreadBin(u);
-                $if(FULL_BINS | bin < UInt(RADIX_DIGITS))
+                $if(FULL_BINS | bin < RADIX_DIGITS)
                 {
                     UInt inc_sum   = bins[u];
                     Int  want_mask = ~0;
@@ -280,25 +282,24 @@ namespace details
                     Int block_jdx = Int(block_idx) - 1;
                     $while(block_jdx >= 0)
                     {
-                        UInt loc_j   = block_jdx * UInt(RADIX_DIGITS) + bin;
+                        UInt loc_j   = block_jdx * RADIX_DIGITS + bin;
                         UInt value_j = d_lookback.volatile_read(loc_j);
                         $while(value_j == 0)
                         {
                             value_j = d_lookback.volatile_read(loc_j);
                         };
 
-                        inc_sum += value_j & UInt(LOOKBACK_VALUE_MASK);
-                        want_mask = warp_active_bit_mask((value_j & UInt(LOOKBACK_KIND_MASK)) == 0).x;
-                        $if((value_j & UInt(LOOKBACK_GLOBAL_MASK)) != 0)
+                        inc_sum += value_j & LOOKBACK_VALUE_MASK;
+                        want_mask = warp_active_bit_mask((value_j & LOOKBACK_KIND_MASK) == 0).x;
+                        $if((value_j & LOOKBACK_GLOBAL_MASK) != 0)
                         {
                             $break;
                         };
                         block_jdx -= 1;
                     };
 
-
-                    UInt loc_i   = block_idx * UInt(RADIX_DIGITS) + bin;
-                    UInt value_i = inc_sum | UInt(LOOKBACK_GLOBAL_MASK);
+                    UInt loc_i   = block_idx * RADIX_DIGITS + bin;
+                    UInt value_i = inc_sum | LOOKBACK_GLOBAL_MASK;
                     d_lookback.volatile_write(loc_i, value_i);
 
                     m_global_offsets->write(bin, m_global_offsets->read(bin) + inc_sum - bins[u]);
@@ -309,14 +310,14 @@ namespace details
         void UpdateBinsGlobal(const ArrayVar<uint, BINS_PER_THREAD>& bins,
                               const ArrayVar<uint, BINS_PER_THREAD>& offsets)
         {
-            Bool last_block = (block_idx + 1) * UInt(TILE_ITEMS) >= num_items;
+            Bool last_block = (block_idx + 1) * RADIX_DIGITS >= num_items;
 
             $if(last_block)
             {
                 for(auto i = 0u; i < BINS_PER_THREAD; ++i)
                 {
                     UInt bin = ThreadBin(i);
-                    $if(FULL_BINS | bin < UInt(RADIX_DIGITS))
+                    $if(FULL_BINS | bin < RADIX_DIGITS)
                     {
                         d_bins_out.write(bin, m_global_offsets->read(bin) + offsets[i] + bins[i]);
                     };
@@ -325,8 +326,8 @@ namespace details
         }
 
 
-        void ShortCircuitCopy(const ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys,
-                              const ArrayVar<uint, BINS_PER_THREAD>&              bins)
+        void ShortCircuitCopy(ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys,
+                              ArrayVar<uint, BINS_PER_THREAD>&              bins)
         {
             UInt common_bits = digit_extractor_t().Digit(keys[0]);
 
@@ -335,11 +336,11 @@ namespace details
             for(auto i = 0u; i < BINS_PER_THREAD; ++i)
             {
                 UInt bin   = ThreadBin(i);
-                offsets[i] = select(0u, UInt(TILE_ITEMS), bin > common_bits);
+                offsets[i] = select(0u, TILE_ITEMS, bin > common_bits);
             }
 
             LoadBinsToOffsetsGlobal(offsets);
-            LoadbackGlobal(bins);
+            LookbackGlobal(bins);
             UpdateBinsGlobal(bins, offsets);
 
             sync_block();
@@ -353,26 +354,30 @@ namespace details
 
             $if(full_block)
             {
-                StoreDirectWarpStriped(thread_id().x, d_keys_out, global_offset, keys);
+                StoreDirectWarpStriped<bit_ordered_type, ITEMS_PER_THREAD>(
+                    thread_id().x, d_keys_out, global_offset, keys);
             }
             $else
             {
-                UInt tile_items = num_items - block_idx * UInt(TILE_ITEMS);
-                StoreDirectWarpStriped(thread_id().x, d_keys_out + global_offset, keys, tile_items);
+                UInt tile_items = num_items - block_idx * TILE_ITEMS;
+                StoreDirectWarpStriped<bit_ordered_type, ITEMS_PER_THREAD>(
+                    thread_id().x, d_keys_out, global_offset, keys, tile_items);
             };
 
             if constexpr(!KEYS_ONLY)
             {
                 ArrayVar<ValueType, ITEMS_PER_THREAD> values;
-                LoadValues(block_idx * UInt(TILE_ITEMS), values);
+                LoadValues(block_idx * TILE_ITEMS, values);
                 $if(full_block)
                 {
-                    StoreDirectWarpStriped(thread_id().x, d_values_out + global_offset, values);
+                    StoreDirectWarpStriped<bit_ordered_type, ITEMS_PER_THREAD>(
+                        thread_id().x, d_values_out, global_offset, values);
                 }
                 $else
                 {
-                    UInt tile_items = num_items - block_idx * UInt(TILE_ITEMS);
-                    StoreDirectWarpStriped(thread_id().x, d_values_out + global_offset, values, tile_items);
+                    UInt tile_items = num_items - block_idx * TILE_ITEMS;
+                    StoreDirectWarpStriped<bit_ordered_type, ITEMS_PER_THREAD>(
+                        thread_id().x, d_values_out, global_offset, values, tile_items);
                 };
             }
         }
@@ -444,15 +449,15 @@ namespace details
         BufferVar<uint>& d_bins_out;
         BufferVar<uint>& d_bins_in;
 
-        BufferVar<KeyType>&   d_keys_in;
-        BufferVar<KeyType>&   d_keys_out;
-        BufferVar<ValueType>& d_values_in;
-        BufferVar<ValueType>& d_values_out;
+        BufferVar<bit_ordered_type>& d_keys_in;
+        BufferVar<bit_ordered_type>& d_keys_out;
+        BufferVar<ValueType>&        d_values_in;
+        BufferVar<ValueType>&        d_values_out;
 
         UInt num_items;
-        UInt begin_bit, end_bit;
-
         UInt current_bit;
+        UInt num_bits;
+
         UInt warp;
         UInt lane_id;
         UInt block_idx;

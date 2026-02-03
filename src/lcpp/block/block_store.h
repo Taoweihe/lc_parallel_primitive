@@ -29,7 +29,7 @@ void StoreDirectWarpStriped(compute::UInt                               linear_t
                             const compute::ArrayVar<T, ItemsPerThread>& items)
 {
     compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
-    compute::UInt wid         = linear_tid >> compute::log2(compute::UInt(WARP_SIZE));
+    compute::UInt wid         = linear_tid >> details::LOG_WARP_SIZE;
     compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
 
     compute::UInt thread_offset = global_offset + warp_offset + tid;
@@ -48,7 +48,7 @@ void StoreDirectWarpStriped(compute::UInt                               linear_t
                             compute::UInt                               valid_item)
 {
     compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
-    compute::UInt wid         = linear_tid >> compute::log2(compute::UInt(WARP_SIZE));
+    compute::UInt wid         = linear_tid >> details::LOG_WARP_SIZE;
     compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
 
     compute::UInt thread_offset = global_offset + warp_offset + tid;
