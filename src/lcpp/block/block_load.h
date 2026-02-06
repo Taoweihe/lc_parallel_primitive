@@ -2,7 +2,7 @@
  * @Author: Ligo 
  * @Date: 2025-10-14 14:01:20 
  * @Last Modified by: Ligo
- * @Last Modified time: 2025-11-13 16:31:58
+ * @Last Modified time: 2026-02-06 13:58:39
  */
 #pragma once
 
@@ -38,6 +38,19 @@ void LoadDirectStriped(compute::UInt                         linear_tid,
 
 template <uint BlockThreads, typename T, size_t ItemsPerThread>
 void LoadDirectStriped(compute::UInt                         linear_tid,
+                       const compute::ByteBufferVar&         block_src_it,
+                       compute::UInt                         tile_offset,
+                       compute::ArrayVar<T, ItemsPerThread>& dst_items)
+{
+    for(auto i = 0; i < ItemsPerThread; i++)
+    {
+        UInt src_pos = tile_offset + linear_tid + i * compute::UInt(BlockThreads);
+        dst_items[i] = block_src_it.read<T>(src_pos * (uint)sizeof(T));
+    }
+}
+
+template <uint BlockThreads, typename T, size_t ItemsPerThread>
+void LoadDirectStriped(compute::UInt                         linear_tid,
                        const compute::BufferVar<T>&          block_src_it,
                        compute::UInt                         tile_offset,
                        compute::ArrayVar<T, ItemsPerThread>& dst_items,
@@ -45,10 +58,29 @@ void LoadDirectStriped(compute::UInt                         linear_tid,
 {
     for(auto i = 0; i < ItemsPerThread; i++)
     {
-        UInt src_pos = tile_offset + linear_tid + i * compute::UInt(BlockThreads);
+        UInt src_pos = linear_tid + i * compute::UInt(BlockThreads);
         $if(src_pos < block_item_end)
         {
-            dst_items[i] = block_src_it.read(src_pos);
+            src_pos += tile_offset;
+            dst_items[i] = block_src_it.read(src_pos * (uint)sizeof(T));
+        };
+    }
+}
+
+template <uint BlockThreads, typename T, size_t ItemsPerThread>
+void LoadDirectStriped(compute::UInt                         linear_tid,
+                       const compute::ByteBufferVar&         block_src_it,
+                       compute::UInt                         tile_offset,
+                       compute::ArrayVar<T, ItemsPerThread>& dst_items,
+                       compute::UInt                         block_item_end)
+{
+    for(auto i = 0; i < ItemsPerThread; i++)
+    {
+        UInt src_pos = linear_tid + i * compute::UInt(BlockThreads);
+        $if(src_pos < block_item_end)
+        {
+            src_pos += tile_offset;
+            dst_items[i] = block_src_it.read<T>(src_pos * (uint)sizeof(T));
         };
     }
 }
@@ -68,15 +100,30 @@ void LoadDirectStriped(compute::UInt                         linear_tid,
     LoadDirectStriped<BlockThreads, T, ItemsPerThread>(linear_tid, block_src_it, tile_offset, dst_items, block_item_end);
 }
 
+template <uint BlockThreads, typename T, size_t ItemsPerThread>
+void LoadDirectStriped(compute::UInt                         linear_tid,
+                       const compute::ByteBufferVar&         block_src_it,
+                       compute::UInt                         tile_offset,
+                       compute::ArrayVar<T, ItemsPerThread>& dst_items,
+                       compute::UInt                         block_item_end,
+                       compute::Var<T>                       default_value)
+{
+    for(auto i = 0; i < ItemsPerThread; i++)
+    {
+        dst_items[i] = default_value;
+    }
+    LoadDirectStriped<BlockThreads, T, ItemsPerThread>(linear_tid, block_src_it, tile_offset, dst_items, block_item_end);
+}
 
-template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::BLOCK_SIZE>
+
+template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::WARP_SIZE>
 void LoadDirectWarpStriped(compute::UInt                         linear_tid,
                            const compute::BufferVar<T>&          block_src_it,
                            compute::UInt                         tile_offset,
                            compute::ArrayVar<T, ItemsPerThread>& dst_items)
 {
-    compute::UInt tid = linear_tid & compute::UInt(WARP_SIZE - 1);
-    compute::UInt wid = linear_tid >> compute::UInt(compute::log2(compute::Float(WARP_SIZE)));
+    compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
+    compute::UInt wid         = linear_tid >> details::LOG_WARP_SIZE;
     compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
 
     // Load directly in warp-striped order
@@ -88,30 +135,87 @@ void LoadDirectWarpStriped(compute::UInt                         linear_tid,
 }
 
 
-template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::BLOCK_SIZE>
+template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::WARP_SIZE>
+void LoadDirectWarpStriped(compute::UInt                         linear_tid,
+                           const compute::ByteBufferVar&         block_src_it,
+                           compute::UInt                         tile_offset,
+                           compute::ArrayVar<T, ItemsPerThread>& dst_items)
+{
+    compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
+    compute::UInt wid         = linear_tid >> details::LOG_WARP_SIZE;
+    compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
+
+    // Load directly in warp-striped order
+    for(int i = 0; i < ItemsPerThread; ++i)
+    {
+        UInt src_pos = tile_offset + warp_offset + tid + (i * compute::UInt(WARP_SIZE));
+        dst_items[i] = block_src_it.read<T>(src_pos * (uint)sizeof(T));
+    }
+}
+
+template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::WARP_SIZE>
 void LoadDirectWarpStriped(compute::UInt                         linear_tid,
                            const compute::BufferVar<T>&          block_src_it,
                            compute::UInt                         tile_offset,
                            compute::ArrayVar<T, ItemsPerThread>& dst_items,
                            compute::UInt                         block_item_end)
 {
-    compute::UInt tid = linear_tid & compute::UInt(WARP_SIZE - 1);
-    compute::UInt wid = linear_tid >> compute::UInt(compute::log2(compute::Float(WARP_SIZE)));
+    compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
+    compute::UInt wid         = linear_tid >> details::LOG_WARP_SIZE;
     compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
+
 
     for(auto i = 0; i < ItemsPerThread; i++)
     {
-        UInt src_pos = tile_offset + warp_offset + tid + (i * compute::UInt(WARP_SIZE));
+        UInt src_pos = warp_offset + tid + (i * compute::UInt(WARP_SIZE));
         $if(src_pos < block_item_end)
         {
+            src_pos += tile_offset;
             dst_items[i] = block_src_it.read(src_pos);
         };
     }
 }
 
-template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::BLOCK_SIZE>
+template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::WARP_SIZE>
+void LoadDirectWarpStriped(compute::UInt                         linear_tid,
+                           const compute::ByteBufferVar&         block_src_it,
+                           compute::UInt                         tile_offset,
+                           compute::ArrayVar<T, ItemsPerThread>& dst_items,
+                           compute::UInt                         block_item_end)
+{
+    compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
+    compute::UInt wid         = linear_tid >> details::LOG_WARP_SIZE;
+    compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
+
+    for(auto i = 0; i < ItemsPerThread; i++)
+    {
+        UInt src_pos = warp_offset + tid + (i * compute::UInt(WARP_SIZE));
+        $if(src_pos < block_item_end)
+        {
+            src_pos += tile_offset;
+            dst_items[i] = block_src_it.read<T>(src_pos * (uint)sizeof(T));
+        };
+    }
+}
+
+template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::WARP_SIZE>
 void LoadDirectWarpStriped(compute::UInt                         linear_tid,
                            const compute::BufferVar<T>&          block_src_it,
+                           compute::UInt                         tile_offset,
+                           compute::ArrayVar<T, ItemsPerThread>& dst_items,
+                           compute::UInt                         block_item_end,
+                           compute::Var<T>                       default_value)
+{
+    for(auto i = 0; i < ItemsPerThread; i++)
+    {
+        dst_items[i] = default_value;
+    }
+    LoadDirectWarpStriped<T, ItemsPerThread, WARP_SIZE>(linear_tid, block_src_it, tile_offset, dst_items, block_item_end);
+}
+
+template <typename T, size_t ItemsPerThread, size_t WARP_SIZE = details::WARP_SIZE>
+void LoadDirectWarpStriped(compute::UInt                         linear_tid,
+                           const compute::ByteBufferVar&         block_src_it,
                            compute::UInt                         tile_offset,
                            compute::ArrayVar<T, ItemsPerThread>& dst_items,
                            compute::UInt                         block_item_end,
@@ -162,7 +266,7 @@ class BlockLoad : public LuisaModule
         luisa::compute::set_block_size(BlockSize);
         UInt thid = thread_id().x;
 
-        if(DefaultLoadAlgorithm == BlockLoadAlgorithm::BLOCK_LOAD_DIRECT)
+        if constexpr(DefaultLoadAlgorithm == BlockLoadAlgorithm::BLOCK_LOAD_DIRECT)
         {
             LoadDirectedBlocked(thid * UInt(ITEMS_PER_THREAD), d_in, thread_data, block_item_start, block_item_end, default_value);
         };

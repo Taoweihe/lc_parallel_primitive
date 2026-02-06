@@ -2,7 +2,7 @@
  * @Author: Ligo
  * @Date: 2025-11-13 16:31:28
  * @Last Modified by: Ligo
- * @Last Modified time: 2025-11-14 11:23:14
+ * @Last Modified time: 2026-02-06 10:12:57
  */
 #pragma once
 #include <luisa/dsl/builtin.h>
@@ -63,9 +63,10 @@ namespace details
 }  // namespace details
 
 
-template <uint BLOCK_THREADS, uint RadixBits, bool IsDescending, WarpMatchAlgorithm MATCH_ALGORITHM = WARP_MATCH_ANY, uint NUM_PARTS = 1, uint WARP_SIZE = details::WARP_SIZE>
+template <uint BLOCK_THREADS, uint RadixBits, bool IsDescending, WarpMatchAlgorithm MATCH_ALGORITHM = WARP_MATCH_ANY, uint NUM_PARTS = 1, uint ITEMS_PER_THREAD = details::ITEMS_PER_THREAD, uint WARP_SIZE = details::WARP_SIZE>
 class BlockRadixRankMatchEarlyCounts : public LuisaModule
 {
+  public:
     static constexpr uint RADIX_DIGITS    = 1 << RadixBits;
     static constexpr uint BINS_PER_THREAD = (RADIX_DIGITS + BLOCK_THREADS - 1) / BLOCK_THREADS;
     static constexpr uint BINS_TRACKED_PER_THREAD = BINS_PER_THREAD;
@@ -77,6 +78,9 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
     static constexpr uint NUM_MATCH_MASKS = MATCH_ALGORITHM == WARP_MATCH_ATOMIC_OR ? BLOCK_WARPS : 0;
     static constexpr uint MATCH_MASKS_ALLOC_SIZE = NUM_MATCH_MASKS < 1 ? 1 : NUM_MATCH_MASKS;
 
+  private:
+    using BlockScanT = luisa::parallel_primitive::BlockScan<uint, BLOCK_THREADS, BINS_PER_THREAD, WARP_SIZE>;
+
   public:
     BlockRadixRankMatchEarlyCounts() {}
     ~BlockRadixRankMatchEarlyCounts() = default;
@@ -84,29 +88,27 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
     template <typename UnsignedBits, uint KEY_PER_THREAD, typename DigitExtractorT, typename CountsCallback>
     struct BlockRadixRankMatchInternal
     {
-        SmemTypePtr<uint> warp_offsets;
-        SmemTypePtr<uint> warp_histograms;
-        SmemTypePtr<uint> match_masks;
-        DigitExtractorT   digit_extractor;
-        CountsCallback    counts_callback;
-        UInt              warp;
-        UInt              lane;
+        SmemTypePtr<uint> m_warp_offsets;
+        SmemTypePtr<uint> m_match_masks;
+        DigitExtractorT   m_digit_extractor;
+        CountsCallback    m_counts_callback;
+        UInt              m_warp;
+        UInt              m_lane;
 
         BlockRadixRankMatchInternal(DigitExtractorT digit_extractor, CountsCallback callback)
-            : digit_extractor(digit_extractor)
-            , counts_callback(callback)
-            , warp(thread_id().x / WARP_SIZE)
-            , lane(warp_lane_id())
+            : m_digit_extractor(digit_extractor)
+            , m_counts_callback(callback)
+            , m_warp(thread_id().x / WARP_SIZE)
+            , m_lane(warp_lane_id())
         {
-            warp_offsets    = new SmemType<uint>(BLOCK_WARPS * RADIX_DIGITS);
-            warp_histograms = new SmemType<uint>(BLOCK_WARPS * RADIX_DIGITS * NUM_PARTS);
-            match_masks     = new SmemType<uint>(MATCH_MASKS_ALLOC_SIZE * RADIX_DIGITS);
+            m_warp_offsets = new SmemType<uint>(BLOCK_WARPS * RADIX_DIGITS * NUM_PARTS);
+            m_match_masks  = new SmemType<uint>(MATCH_MASKS_ALLOC_SIZE * RADIX_DIGITS);
         }
 
 
         UInt Digit(Var<UnsignedBits> key)
         {
-            UInt digit = digit_extractor.Digit(key);
+            UInt digit = m_digit_extractor.Digit(key);
             return IsDescending ? RADIX_DIGITS - 1 - digit : digit;
         };
 
@@ -118,36 +120,35 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
 
         void ComputeHistogramWarp(const ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys)
         {
-            $for(bin, lane, UInt(RADIX_DIGITS), UInt(WARP_SIZE))
+            $for(bin, m_lane, UInt(RADIX_DIGITS), UInt(WARP_SIZE))
             {
                 for(auto part = 0u; part < NUM_PARTS; ++part)
                 {
-                    warp_histograms->write(warp * RADIX_DIGITS * NUM_PARTS + UInt(bin) * NUM_PARTS + part, 0);
+                    m_warp_offsets->write(m_warp * RADIX_DIGITS * NUM_PARTS + UInt(bin) * NUM_PARTS + part, 0u);
                 }
             };
 
             if constexpr(MATCH_ALGORITHM == WARP_MATCH_ATOMIC_OR)
             {
-                $for(bin, lane, UInt(RADIX_DIGITS), UInt(WARP_SIZE))
+                $for(bin, m_lane, UInt(RADIX_DIGITS), UInt(WARP_SIZE))
                 {
-                    match_masks->write(bin, 0u);
+                    m_match_masks->write(bin, 0u);
                 };
             }
 
-            // // TODO: sync_warp(WARP_MASK);
+            // TODO: sync_warp(WARP_MASK);
             sync_block();
 
             for(auto i = 0u; i < KEY_PER_THREAD; ++i)
             {
-                UInt bin   = Digit(keys[i]);
-                UInt index = warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS + (lane % NUM_PARTS);
-                warp_histograms->atomic(index).fetch_add(1u);
+                UInt bin = Digit(keys[i]);
+                UInt index = m_warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS + (m_lane % NUM_PARTS);
+                m_warp_offsets->atomic(index).fetch_add(1u);
             }
-
 
             if constexpr(NUM_PARTS > 1)
             {
-                // // TODO: sync_warp(WARP_MASK);
+                // TODO: sync_warp(WARP_MASK);
                 sync_block();
                 // TODO: handle RADIX_DIGITS % WARP_THREADS != 0 if it becomes necessary
                 constexpr uint WARP_BINS_PER_THREAD = RADIX_DIGITS / WARP_SIZE;
@@ -156,12 +157,12 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
 
                 for(auto u = 0u; u < WARP_BINS_PER_THREAD; ++u)
                 {
-                    UInt                      bin = lane + u * WARP_SIZE;
+                    UInt                      bin = m_lane + u * WARP_SIZE;
                     ArrayVar<uint, NUM_PARTS> bin_counts;
                     for(auto part = 0u; part < NUM_PARTS; ++part)
                     {
                         bin_counts[part] =
-                            warp_histograms->read(warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS + part);
+                            m_warp_offsets->read(m_warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS + part);
                     }
 
                     local_bins[u] = ThreadReduce<uint, NUM_PARTS>().Reduce(
@@ -172,8 +173,8 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
 
                 for(auto u = 0u; u < WARP_BINS_PER_THREAD; ++u)
                 {
-                    UInt bin = lane + u * WARP_SIZE;
-                    warp_histograms->write(warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS, local_bins[u]);
+                    UInt bin = m_lane + u * WARP_SIZE;
+                    m_warp_offsets->write(m_warp * RADIX_DIGITS * NUM_PARTS + bin * NUM_PARTS, local_bins[u]);
                 }
             }
         }
@@ -188,8 +189,8 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
                 {
                     for(auto j_warp = 0u; j_warp < BLOCK_WARPS; ++j_warp)
                     {
-                        auto warp_offset = warp_offsets->read(j_warp * RADIX_DIGITS + bin);
-                        warp_offsets->write(j_warp * RADIX_DIGITS + bin, bins[u]);
+                        auto warp_offset = m_warp_offsets->read(j_warp * RADIX_DIGITS + bin);
+                        m_warp_offsets->write(j_warp * RADIX_DIGITS + bin, bins[u]);
                         bins[u] += warp_offset;
                     }
                 };
@@ -198,7 +199,6 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
 
         void ComputeOffsetsWarpDownSweep(const ArrayVar<uint, BINS_PER_THREAD>& offsets)
         {
-            UInt warp_offset = 0;
             for(auto u = 0u; u < BINS_PER_THREAD; ++u)
             {
                 UInt bin = ThreadBin(u);
@@ -207,40 +207,42 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
                     UInt digit_offset = offsets[u];
                     for(auto j_warp = 0u; j_warp < BLOCK_WARPS; ++j_warp)
                     {
-                        warp_offsets->write(j_warp * RADIX_DIGITS + bin, digit_offset);
+                        UInt offset = m_warp_offsets->read(j_warp * RADIX_DIGITS + bin) + digit_offset;
+                        m_warp_offsets->write(j_warp * RADIX_DIGITS + bin, offset);
                     }
                 };
             };
         }
 
         void ComputeRanksItem(const ArrayVar<UnsignedBits, KEY_PER_THREAD>& keys,
-                              ArrayVar<uint, KEY_PER_THREAD>&               ranks)
+                              ArrayVar<uint, KEY_PER_THREAD>&               ranks,
+                              details::constant_t<WARP_MATCH_ATOMIC_OR>)
         {
-            UInt lane_mask = 1u << lane;
+            UInt lane_mask = 1u << m_lane;
 
             for(auto u = 0u; u < KEY_PER_THREAD; ++u)
             {
                 UInt bin = Digit(keys[u]);
 
-                match_masks->atomic(bin).fetch_or(lane_mask);
+                m_match_masks->atomic(bin).fetch_or(lane_mask);
 
                 // TODO: sync_warp(WARP_MASK);
                 sync_block();
-                UInt bin_mask    = match_masks->read(bin);
+                UInt bin_mask    = m_match_masks->read(bin);
                 UInt leader      = (WARP_SIZE - 1) - luisa::compute::clz(bin_mask);
                 UInt warp_offset = 0;
-                UInt popc        = popcount(bin_mask & get_lane_mask_le(lane));
+                UInt popc        = popcount(bin_mask & get_lane_mask_le(m_lane));
 
-                $if(lane == leader)
+                $if(m_lane == leader)
                 {
                     // warp_offset
-                    warp_offset = warp_offsets->atomic(warp * RADIX_DIGITS + UInt(bin)).fetch_add(popc);
+                    warp_offset = m_warp_offsets->atomic(m_warp * RADIX_DIGITS + UInt(bin)).fetch_add(popc);
                 };
                 warp_offset = warp_read_lane(warp_offset, leader);
 
-                $if(lane == leader)
+                $if(m_lane == leader)
                 {
-                    match_masks->write(bin, 0u);
+                    m_match_masks->write(bin, 0u);
                 };
 
                 // TODO: sync_warp(WARP_MASK);
@@ -259,15 +261,15 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
 
                 UInt bin_mask =
                     details::warp_in_block_matcher_t<RadixBits, PARTIAL_WARP_THREADS, PARTIAL_WARP_ID - 1>::match_any(
-                        bin, warp);
+                        bin, m_warp);
                 UInt leader      = (WARP_SIZE - 1) - luisa::compute::clz(bin_mask);
                 UInt warp_offset = 0;
-                UInt popc        = popcount(bin_mask & get_lane_mask_le(lane));
-
-                $if(lane == leader)
+                UInt popc        = popcount(bin_mask & get_lane_mask_le(m_lane));
+                $if(m_lane == leader)
                 {
                     // warp_offset
-                    warp_offset = warp_offsets->atomic(warp * UInt(RADIX_DIGITS) + UInt(bin)).fetch_add(popc);
+                    warp_offset =
+                        m_warp_offsets->atomic(m_warp * UInt(RADIX_DIGITS) + UInt(bin)).fetch_add(popc);
                 };
                 // __shfl_sync = warp_read_lane
                 warp_offset = warp_read_lane(warp_offset, leader);
@@ -287,12 +289,13 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
             ArrayVar<uint, BINS_PER_THREAD> bins;
             ComputeOffsetsWarpUpSweep(bins);
 
-            counts_callback(bins);
+            m_counts_callback(bins);
 
-            BlockScan<uint>().ExclusiveSum(bins, exclusive_digit_prefix);
+            BlockScanT().ExclusiveSum(bins, exclusive_digit_prefix);
 
             ComputeOffsetsWarpDownSweep(exclusive_digit_prefix);
-            // sync_block();
+            sync_block();
+
             ComputeRanksItem(keys, ranks, details::constant_v<MATCH_ALGORITHM>);
         };
     };

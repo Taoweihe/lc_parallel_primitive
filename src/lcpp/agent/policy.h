@@ -2,14 +2,13 @@
  * @Author: Ligo 
  * @Date: 2025-11-10 16:01:44 
  * @Last Modified by: Ligo
- * @Last Modified time: 2025-11-12 22:23:19
+ * @Last Modified time: 2026-02-06 15:38:07
  */
 
 
 #pragma once
 
 #include <luisa/core/basic_traits.h>
-#include <lcpp/common/utils.h>
 #include <algorithm>
 namespace luisa::parallel_primitive
 {

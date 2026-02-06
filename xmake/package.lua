@@ -24,9 +24,8 @@ package("luisa-compute")
     set_description("High-Performance Rendering Framework on Stream Architectures")
     set_license("Apache-2.0")
 
-    -- add_urls("https://github.com/LuisaGroup/LuisaCompute.git", {submodules = false})
-    -- add_versions("2025.11.05", "f363db428873120924880e28d3a284202edb237a")
-     set_sourcedir("C:/Ligo/Project/pubuipc/LuisaCompute")
+    add_urls("https://github.com/LuisaGroup/LuisaCompute.git", {submodules = false})
+    add_versions("2025.02.06", "ba723cc001da99cbcbe248e451f1a860da8c61f0")
 
     add_configs("cuda", {description = "Enable CUDA backend", default = false, type = "boolean"})
     add_configs("vulkan", {description = "Enable Vulkan backend", default = false, type = "boolean"})

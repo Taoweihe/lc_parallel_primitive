@@ -2,7 +2,7 @@
  * @Author: Ligo 
  * @Date: 2025-10-14 16:49:47 
  * @Last Modified by: Ligo
- * @Last Modified time: 2025-10-22 23:53:54
+ * @Last Modified time: 2026-02-06 14:18:26
  */
 
 
@@ -42,6 +42,25 @@ void StoreDirectWarpStriped(compute::UInt                               linear_t
 
 template <typename T, int ItemsPerThread, size_t WARP_SIZE = details::BLOCK_SIZE>
 void StoreDirectWarpStriped(compute::UInt                               linear_tid,
+                            compute::ByteBufferVar&                     block_itr,
+                            compute::UInt                               global_offset,
+                            const compute::ArrayVar<T, ItemsPerThread>& items)
+{
+    compute::UInt tid         = linear_tid & compute::UInt(WARP_SIZE - 1);
+    compute::UInt wid         = linear_tid >> details::LOG_WARP_SIZE;
+    compute::UInt warp_offset = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
+
+    compute::UInt thread_offset = global_offset + warp_offset + tid;
+    // Store directly in warp-striped order
+    for(auto item = 0; item < ItemsPerThread; item++)
+    {
+        block_itr.write((thread_offset + (item * compute::UInt(WARP_SIZE))) * compute::UInt(sizeof(T)),
+                        items[item]);
+    }
+}
+
+template <typename T, int ItemsPerThread, size_t WARP_SIZE = details::BLOCK_SIZE>
+void StoreDirectWarpStriped(compute::UInt                               linear_tid,
                             compute::BufferVar<T>&                      block_itr,
                             compute::UInt                               global_offset,
                             const compute::ArrayVar<T, ItemsPerThread>& items,
@@ -58,6 +77,29 @@ void StoreDirectWarpStriped(compute::UInt                               linear_t
         $if(warp_offset + tid + (item * compute::UInt(WARP_SIZE)) < valid_item)
         {
             block_itr.write(thread_offset + (item * compute::UInt(WARP_SIZE)), items[item]);
+        };
+    }
+}
+
+template <typename T, int ItemsPerThread, size_t WARP_SIZE = details::BLOCK_SIZE>
+void StoreDirectWarpStriped(compute::UInt                               linear_tid,
+                            compute::ByteBufferVar&                     block_itr,
+                            compute::UInt                               global_offset,
+                            const compute::ArrayVar<T, ItemsPerThread>& items,
+                            compute::UInt                               valid_item)
+{
+    compute::UInt tid           = linear_tid & compute::UInt(WARP_SIZE - 1);
+    compute::UInt wid           = linear_tid >> details::LOG_WARP_SIZE;
+    compute::UInt warp_offset   = wid * compute::UInt(WARP_SIZE * ItemsPerThread);
+    compute::UInt thread_offset = global_offset + warp_offset + tid;
+    // Store directly in warp-striped order
+    for(auto item = 0; item < ItemsPerThread; item++)
+    {
+        compute::UInt pos = warp_offset + tid + (item * compute::UInt(WARP_SIZE));
+        $if(pos < valid_item)
+        {
+            block_itr.write((thread_offset + (item * compute::UInt(WARP_SIZE))) * compute::UInt(sizeof(T)),
+                            items[item]);
         };
     }
 }

@@ -2,7 +2,7 @@
  * @Author: Ligo
  * @Date: 2025-11-12 15:04:20
  * @Last Modified by: Ligo
- * @Last Modified time: 2025-11-14 13:43:38
+ * @Last Modified time: 2026-02-06 15:38:14
  */
 
 #pragma once
@@ -66,10 +66,19 @@ namespace details
 
         using Twiddle = RadixSortTwiddle<IS_DESCENDING, KeyType>;
 
-        using BlockRadixRankT = BlockRadixRankMatchEarlyCounts<BLOCK_SIZE, RADIX_BITS, IS_DESCENDING>;
+        using BlockRadixRankT =
+            BlockRadixRankMatchEarlyCounts<BLOCK_SIZE, RADIX_BITS, IS_DESCENDING, WarpMatchAlgorithm::WARP_MATCH_ANY>;
+
 
         static inline Callable ThreadBin = [](UInt u) -> UInt
         { return thread_id().x * BINS_PER_THREAD + u; };
+
+        digit_extractor_t digit_extractor() const
+        {
+            return digit_extractor_t(current_bit, num_bits);
+        }
+
+        UInt Digit(Var<bit_ordered_type> key) { return digit_extractor().Digit(key); };
 
         struct CountsCallback
         {
@@ -94,22 +103,21 @@ namespace details
                     bins[u] = other_bins[u];
                 }
                 agent.LookbackPartial(bins);
-
-                agent.TryShortCircuit(keys, bins);
+                // agent.TryShortCircuit(keys, bins);
             }
         };
 
-        AgentRadixSortOneSweep(BufferVar<uint>&      d_lookback,
-                               BufferVar<uint>&      d_ctrs,
-                               BufferVar<uint>&      d_bins_in,
-                               BufferVar<uint>&      d_bins_out,
-                               BufferVar<KeyType>&   keys_in,
-                               BufferVar<KeyType>&   keys_out,
-                               BufferVar<ValueType>& values_in,
-                               BufferVar<ValueType>& values_out,
-                               UInt                  num_items,
-                               UInt                  current_bit,
-                               UInt                  num_bits)
+        AgentRadixSortOneSweep(BufferVar<uint>&            d_lookback,
+                               BufferVar<uint>&            d_ctrs,
+                               const BufferVar<uint>&      d_bins_in,
+                               BufferVar<uint>&            d_bins_out,
+                               const ByteBufferVar&        keys_in,
+                               ByteBufferVar&              keys_out,
+                               const BufferVar<ValueType>& values_in,
+                               BufferVar<ValueType>&       values_out,
+                               UInt                        num_items,
+                               UInt                        current_bit,
+                               UInt                        num_bits)
             : d_lookback(d_lookback)
             , d_ctrs(d_ctrs)
             , d_bins_in(d_bins_in)
@@ -128,6 +136,7 @@ namespace details
             m_shared_block_idx = new SmemType<uint>(1);
             m_shared_values    = KEYS_ONLY ? nullptr : new SmemType<ValueType>(TILE_ITEMS);
             m_global_offsets   = new SmemType<uint>(RADIX_DIGITS);
+
             $if(thread_id().x == 0)
             {
                 m_shared_block_idx->write(0, d_ctrs.atomic(0u).fetch_add(1u));
@@ -143,17 +152,17 @@ namespace details
         {
             $if(full_block)
             {
-                LoadDirectWarpStriped(thread_id().x, d_keys_in, tile_offset, keys);
+                LoadDirectWarpStriped<bit_ordered_type, ITEMS_PER_THREAD>(thread_id().x, d_keys_in, tile_offset, keys);
             }
             $else
             {
-                LoadDirectWarpStriped(
+                LoadDirectWarpStriped<bit_ordered_type, ITEMS_PER_THREAD>(
                     thread_id().x, d_keys_in, tile_offset, keys, num_items - tile_offset, Twiddle::DefaultKey());
             };
 
             for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
             {
-                keys[i] = Twiddle::In(Var<bit_ordered_type>(keys[i]));
+                keys[i] = Twiddle::In(keys[i]);
             }
         }
 
@@ -161,11 +170,12 @@ namespace details
         {
             $if(full_block)
             {
-                LoadDirectWarpStriped(thread_id().x, d_values_in, tile_offset, values);
+                LoadDirectWarpStriped<ValueType, ITEMS_PER_THREAD>(thread_id().x, d_values_in, tile_offset, values);
             }
             $else
             {
-                LoadDirectWarpStriped(thread_id().x, d_values_in, tile_offset, values, num_items - tile_offset);
+                LoadDirectWarpStriped<ValueType, ITEMS_PER_THREAD>(
+                    thread_id().x, d_values_in, tile_offset, values, num_items - tile_offset);
             };
         }
 
@@ -174,7 +184,7 @@ namespace details
             for(auto u = 0; u < ITEMS_PER_THREAD; ++u)
             {
                 UInt idx  = thread_id().x + u * UInt(BLOCK_SIZE);
-                digits[u] = digit_extractor_t().Digit(m_shared_keys->read(idx));
+                digits[u] = Digit(m_shared_keys->read(idx));
             }
         }
 
@@ -200,8 +210,8 @@ namespace details
             ArrayVar<uint, ITEMS_PER_THREAD> ranks;
             ArrayVar<uint, BINS_PER_THREAD>  exclusive_digit_prefix;
             ArrayVar<uint, BINS_PER_THREAD>  bins;
-            BlockRadixRankT().template RankKeys<KeyType, ITEMS_PER_THREAD, digit_extractor_t, CountsCallback>(
-                keys, ranks, digit_extractor_t(), exclusive_digit_prefix, CountsCallback(*this, bins, keys));
+            BlockRadixRankT().template RankKeys<bit_ordered_type, ITEMS_PER_THREAD, digit_extractor_t, CountsCallback>(
+                keys, ranks, digit_extractor(), exclusive_digit_prefix, CountsCallback(*this, bins, keys));
 
             sync_block();
             ScatterKeysShared(keys, ranks);
@@ -259,12 +269,13 @@ namespace details
 
         void LoadBinsToOffsetsGlobal(const ArrayVar<uint, BINS_PER_THREAD>& offsets)
         {
-            for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
+            for(auto i = 0u; i < BINS_PER_THREAD; ++i)
             {
                 UInt bin = ThreadBin(i);
                 $if(FULL_BINS | bin < RADIX_DIGITS)
                 {
-                    m_global_offsets->write(bin, d_bins_in.read(bin) - offsets[i]);
+                    UInt global_offset = d_bins_in.read(bin) - offsets[i];
+                    m_global_offsets->write(bin, global_offset);
                 };
             }
         }
@@ -283,12 +294,11 @@ namespace details
                     $while(block_jdx >= 0)
                     {
                         UInt loc_j   = block_jdx * RADIX_DIGITS + bin;
-                        UInt value_j = d_lookback.volatile_read(loc_j);
+                        UInt value_j = 0;
                         $while(value_j == 0)
                         {
                             value_j = d_lookback.volatile_read(loc_j);
                         };
-
                         inc_sum += value_j & LOOKBACK_VALUE_MASK;
                         want_mask = warp_active_bit_mask((value_j & LOOKBACK_KIND_MASK) == 0).x;
                         $if((value_j & LOOKBACK_GLOBAL_MASK) != 0)
@@ -301,7 +311,6 @@ namespace details
                     UInt loc_i   = block_idx * RADIX_DIGITS + bin;
                     UInt value_i = inc_sum | LOOKBACK_GLOBAL_MASK;
                     d_lookback.volatile_write(loc_i, value_i);
-
                     m_global_offsets->write(bin, m_global_offsets->read(bin) + inc_sum - bins[u]);
                 };
             }
@@ -329,7 +338,7 @@ namespace details
         void ShortCircuitCopy(ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys,
                               ArrayVar<uint, BINS_PER_THREAD>&              bins)
         {
-            UInt common_bits = digit_extractor_t().Digit(keys[0]);
+            UInt common_bits = Digit(keys[0]);
 
             ArrayVar<uint, BINS_PER_THREAD> offsets;
 
@@ -370,19 +379,20 @@ namespace details
                 LoadValues(block_idx * TILE_ITEMS, values);
                 $if(full_block)
                 {
-                    StoreDirectWarpStriped<bit_ordered_type, ITEMS_PER_THREAD>(
+                    StoreDirectWarpStriped<ValueType, ITEMS_PER_THREAD>(
                         thread_id().x, d_values_out, global_offset, values);
                 }
                 $else
                 {
                     UInt tile_items = num_items - block_idx * TILE_ITEMS;
-                    StoreDirectWarpStriped<bit_ordered_type, ITEMS_PER_THREAD>(
+                    StoreDirectWarpStriped<ValueType, ITEMS_PER_THREAD>(
                         thread_id().x, d_values_out, global_offset, values, tile_items);
                 };
             }
         }
-        void ScatterKeysShared(const ArrayVar<KeyType, ITEMS_PER_THREAD>& keys,
-                               const ArrayVar<uint, ITEMS_PER_THREAD>&    ranks)
+
+        void ScatterKeysShared(const ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys,
+                               const ArrayVar<uint, ITEMS_PER_THREAD>&             ranks)
         {
             // write to shared memory
             for(int u = 0; u < ITEMS_PER_THREAD; ++u)
@@ -394,16 +404,29 @@ namespace details
 
         void ScatterKeysGlobal()
         {
-            UInt tile_items = select(num_items - block_idx * UInt(TILE_ITEMS), UInt(TILE_ITEMS), full_block);
-
-            for(auto u = 0; u < ITEMS_PER_THREAD; ++u)
+            $if(full_block)
             {
-                UInt                  idx = thread_id().x + u * UInt(BLOCK_SIZE);
-                Var<bit_ordered_type> key = m_shared_keys->read(idx);
-                UInt global_idx = idx + m_global_offsets->read(digit_extractor_t().Digit(key));
-                $if(FULL_BINS | idx < tile_items)
+                ScatterKeysGlobalDirect<true>();
+            }
+            $else
+            {
+                ScatterKeysGlobalDirect<false>();
+            };
+        }
+
+        template <bool FULL_TILE>
+        void ScatterKeysGlobalDirect()
+        {
+            UInt tile_items = select(num_items - block_idx * UInt(TILE_ITEMS), UInt(TILE_ITEMS), FULL_TILE);
+
+            for(auto u = 0u; u < ITEMS_PER_THREAD; ++u)
+            {
+                UInt                  idx        = thread_id().x + u * UInt(BLOCK_SIZE);
+                Var<bit_ordered_type> key        = m_shared_keys->read(idx);
+                UInt                  global_idx = idx + m_global_offsets->read(Digit(key));
+                $if(FULL_TILE | idx < tile_items)
                 {
-                    d_keys_out.write(global_idx, Twiddle::Out(key));
+                    d_keys_out.write(global_idx * (uint)sizeof(bit_ordered_type), Twiddle::Out(key));
                 };
                 sync_block();
             }
@@ -419,17 +442,29 @@ namespace details
             }
         }
 
-
-        void ScatterValuesGlobal()
+        void ScatterValuesGlobal(const ArrayVar<uint, ITEMS_PER_THREAD>& Digit)
         {
-            UInt tile_items = select(num_items - block_idx * UInt(TILE_ITEMS), UInt(TILE_ITEMS), full_block);
+            $if(full_block)
+            {
+                ScatterValuesGlobalDirect<true>(Digit);
+            }
+            $else
+            {
+                ScatterValuesGlobalDirect<false>(Digit);
+            };
+        }
+
+        template <bool FULL_TILE>
+        void ScatterValuesGlobalDirect(const ArrayVar<uint, ITEMS_PER_THREAD>& Digit)
+        {
+            UInt tile_items = select(num_items - block_idx * UInt(TILE_ITEMS), UInt(TILE_ITEMS), FULL_TILE);
 
             for(auto u = 0; u < ITEMS_PER_THREAD; ++u)
             {
                 UInt           idx        = thread_id().x + u * UInt(BLOCK_SIZE);
                 Var<ValueType> value      = m_shared_values->read(idx);
-                UInt           global_idx = idx + m_global_offsets->read(value);
-                $if(FULL_BINS | idx < tile_items)
+                UInt           global_idx = idx + m_global_offsets->read(Digit[u]);
+                $if(FULL_TILE | idx < tile_items)
                 {
                     d_values_out.write(global_idx, value);
                 };
@@ -444,15 +479,15 @@ namespace details
         SmemTypePtr<uint>             m_global_offsets;
         SmemTypePtr<uint>             m_shared_block_idx;
 
-        BufferVar<uint>& d_lookback;
-        BufferVar<uint>& d_ctrs;
-        BufferVar<uint>& d_bins_out;
-        BufferVar<uint>& d_bins_in;
+        BufferVar<uint>&       d_lookback;
+        BufferVar<uint>&       d_ctrs;
+        BufferVar<uint>&       d_bins_out;
+        const BufferVar<uint>& d_bins_in;
 
-        BufferVar<bit_ordered_type>& d_keys_in;
-        BufferVar<bit_ordered_type>& d_keys_out;
-        BufferVar<ValueType>&        d_values_in;
-        BufferVar<ValueType>&        d_values_out;
+        const ByteBufferVar&        d_keys_in;
+        ByteBufferVar&              d_keys_out;
+        const BufferVar<ValueType>& d_values_in;
+        BufferVar<ValueType>&       d_values_out;
 
         UInt num_items;
         UInt current_bit;

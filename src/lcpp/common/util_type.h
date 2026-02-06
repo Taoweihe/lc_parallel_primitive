@@ -2,7 +2,7 @@
  * @Author: Ligo 
  * @Date: 2025-09-26 15:47:22 
  * @Last Modified by: Ligo
- * @Last Modified time: 2025-11-13 00:20:19
+ * @Last Modified time: 2026-02-06 15:17:58
  */
 
 
@@ -118,6 +118,8 @@ namespace details
     template <typename _UnsignedBits, typename T>
     struct BaseTraits<Category::SIGNED_INTEGER, true, _UnsignedBits, T>
     {
+        static_assert(std::numeric_limits<T>::is_specialized, "Please also specialize std::numeric_limits for T");
+
         using UnsignedBits = _UnsignedBits;
         static constexpr UnsignedBits HIGH_BIT = UnsignedBits(1) << ((sizeof(UnsignedBits) * 8) - 1);
         static constexpr UnsignedBits LOWEST_KEY = HIGH_BIT;
@@ -140,6 +142,10 @@ namespace details
     template <typename _UnsignedBits, typename T>
     struct BaseTraits<Category::FLOATING_POINT, true, _UnsignedBits, T>
     {
+        static_assert(::std::numeric_limits<T>::is_specialized, "Please also specialize std::numeric_limits for T");
+        static_assert(::std::is_floating_point<T>::value, "Please also specialize std::is_floating_point for T");
+        static_assert(::std::is_floating_point_v<T>, "Please also specialize std::is_floating_point_v for T");
+
         using UnsignedBits = _UnsignedBits;
         static constexpr UnsignedBits HIGH_BIT = UnsignedBits(1) << ((sizeof(UnsignedBits) * 8) - 1);
         static constexpr UnsignedBits LOWEST_KEY = UnsignedBits(-1);
@@ -147,18 +153,21 @@ namespace details
 
         static compute::Var<UnsignedBits> TwiddleIn(const compute::Var<UnsignedBits>& key)
         {
-            auto mask = (key & compute::Var<UnsignedBits>(HIGH_BIT)) ?
-                            compute::Var<UnsignedBits>(-1) :
-                            compute::Var<UnsignedBits>(HIGH_BIT);
+            compute::Var<UnsignedBits> mask = compute::select(compute::Var<UnsignedBits>(HIGH_BIT),
+                                                              compute::Var<UnsignedBits>(-1),
+                                                              (key & compute::Var<UnsignedBits>(HIGH_BIT))
+                                                                  != compute::Var<UnsignedBits>(0));
             return key ^ mask;
-        }
+        };
+
         static compute::Var<UnsignedBits> TwiddleOut(const compute::Var<UnsignedBits>& key)
         {
-            auto mask = (key & compute::Var<UnsignedBits>(HIGH_BIT)) ?
-                            compute::Var<UnsignedBits>(-1) :
-                            compute::Var<UnsignedBits>(HIGH_BIT);
+            compute::Var<UnsignedBits> mask = compute::select(compute::Var<UnsignedBits>(-1),
+                                                              compute::Var<UnsignedBits>(HIGH_BIT),
+                                                              (key & compute::Var<UnsignedBits>(HIGH_BIT))
+                                                                  != compute::Var<UnsignedBits>(0));
             return key ^ mask;
-        }
+        };
 
       private:
         friend struct is_primite_impl;
@@ -222,6 +231,14 @@ struct NumericTraits<ulong> : BaseTraits<Category::UNSIGNED_INTEGER, true, ulong
 {
 };
 // clang-format on
+template <>
+struct NumericTraits<float> : BaseTraits<Category::FLOATING_POINT, true, unsigned int, float>
+{
+};
+template <>
+struct NumericTraits<double> : BaseTraits<Category::FLOATING_POINT, true, unsigned long long, double>
+{
+};
 
 template <typename T>
 using Traits = NumericTraits<std::remove_cv_t<T>>;

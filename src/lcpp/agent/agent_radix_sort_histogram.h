@@ -2,7 +2,7 @@
  * @Author: Ligo 
  * @Date: 2025-11-12 15:04:20 
  * @Last Modified by: Ligo
- * @Last Modified time: 2025-11-13 00:15:05
+ * @Last Modified time: 2026-02-06 10:31:34
  */
 
 #pragma once
@@ -46,10 +46,9 @@ namespace details
     class AgentRadixSortHistogram : public LuisaModule
     {
       public:
-        static constexpr uint TILE_ITEMS      = BLOCK_SIZE * ITEMS_PER_THREAD;
-        static constexpr uint RADIX_DIGITS    = 1 << RADIX_BITS;
-        static constexpr uint MAX_NUM_PASSES  = (sizeof(KeyType) * 8 + RADIX_BITS - 1) / RADIX_BITS;
-        static constexpr uint SHARED_MEM_SIZE = RADIX_DIGITS * NUM_PARTS * MAX_NUM_PASSES;
+        static constexpr uint TILE_ITEMS     = BLOCK_SIZE * ITEMS_PER_THREAD;
+        static constexpr uint RADIX_DIGITS   = 1 << RADIX_BITS;
+        static constexpr uint MAX_NUM_PASSES = (sizeof(KeyType) * 8 + RADIX_BITS - 1) / RADIX_BITS;
 
         using traits                 = radix::traits_t<KeyType>;
         using bit_ordered_type       = typename traits::bit_ordered_type;
@@ -63,19 +62,16 @@ namespace details
         using digit_extractor_t = traits::template digit_extractor_t<fundamental_digit_extractor_t>;
 
 
-        AgentRadixSortHistogram(SmemTypePtr<uint>   shared_bins,
-                                BufferVar<uint>&    bins_out,
-                                BufferVar<KeyType>& keys_in,
-                                UInt                num_items,
-                                UInt                begin_bit,
-                                UInt                end_bit)
-            : m_shared_bins(shared_bins)
-            , d_bins_out(bins_out)
+        AgentRadixSortHistogram(BufferVar<uint>& bins_out, const ByteBufferVar& keys_in, UInt num_items, UInt begin_bit, UInt end_bit)
+            : d_bins_out(bins_out)
             , d_keys_in(keys_in)
             , num_items(num_items)
             , begin_bit(begin_bit)
             , end_bit(end_bit)
-            , num_passes((end_bit - begin_bit + UInt(RADIX_BITS - 1)) / UInt(RADIX_BITS)) {};
+            , num_passes((end_bit - begin_bit + UInt(RADIX_BITS - 1)) / UInt(RADIX_BITS))
+        {
+            m_shared_bins = new SmemType<uint>{RADIX_DIGITS * NUM_PARTS * MAX_NUM_PASSES};
+        };
 
 
         void Init()
@@ -98,22 +94,22 @@ namespace details
 
         void LoadTileKeys(UInt tile_offset, ArrayVar<bit_ordered_type, ITEMS_PER_THREAD>& keys)
         {
-            Bool full_tile = (num_items - tile_offset >= UInt(TILE_ITEMS));
-            ArrayVar<KeyType, ITEMS_PER_THREAD> temp_keys;
+            Bool full_tile = ((num_items - tile_offset) >= UInt(TILE_ITEMS));
             $if(full_tile)
             {
                 // load direct striped
-                LoadDirectStriped<BLOCK_SIZE, KeyType, ITEMS_PER_THREAD>(thread_id().x, d_keys_in, tile_offset, temp_keys);
+                LoadDirectStriped<BLOCK_SIZE, bit_ordered_type, ITEMS_PER_THREAD>(
+                    thread_id().x, d_keys_in, tile_offset, keys);
             }
             $else
             {
-                LoadDirectStriped<BLOCK_SIZE, KeyType, ITEMS_PER_THREAD>(
-                    thread_id().x, d_keys_in, tile_offset, temp_keys, num_items - tile_offset, Twiddle::DefaultKey());
+                LoadDirectStriped<BLOCK_SIZE, bit_ordered_type, ITEMS_PER_THREAD>(
+                    thread_id().x, d_keys_in, tile_offset, keys, num_items - tile_offset, Twiddle::DefaultKey());
             };
 
             for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
             {
-                keys[i] = Twiddle::In(Var<bit_ordered_type>(temp_keys[i]));
+                keys[i] = Twiddle::In(keys[i]);
             }
         }
 
@@ -124,12 +120,12 @@ namespace details
             UInt pass = 0;
             $for(current_bit, 0u, end_bit, UInt(RADIX_BITS))
             {
-                UInt num_bits = compute::min(UInt(RADIX_BITS), end_bit - current_bit);
+                UInt num_bits = compute::min(+UInt(RADIX_BITS), end_bit - current_bit);
 
                 for(auto i = 0u; i < ITEMS_PER_THREAD; ++i)
                 {
                     UInt bin = digit_extractor_t(current_bit, num_bits).Digit(keys[i]);
-                    UInt index = pass * UInt(RADIX_DIGITS) * UInt(NUM_PARTS) + bin * UInt(NUM_PARTS) + part;
+                    UInt index = pass * RADIX_DIGITS * UInt(NUM_PARTS) + bin * UInt(NUM_PARTS) + part;
                     m_shared_bins->atomic(index).fetch_add(1u);
                 }
                 pass += 1;
@@ -171,6 +167,7 @@ namespace details
             $for(portion_id, UInt(0), num_portions)
             {
                 Init();
+                sync_block();
                 UInt portion_offset = portion_id * MAX_PORTION_SIZE;
                 UInt portion_size   = min(num_items - portion_offset, UInt(MAX_PORTION_SIZE));
                 $for(offset,
@@ -194,8 +191,8 @@ namespace details
       private:
         SmemTypePtr<uint> m_shared_bins;
 
-        BufferVar<uint>&    d_bins_out;
-        BufferVar<KeyType>& d_keys_in;
+        BufferVar<uint>&     d_bins_out;
+        const ByteBufferVar& d_keys_in;
 
         UInt num_items;
         UInt begin_bit, end_bit;

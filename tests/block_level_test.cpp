@@ -37,8 +37,8 @@ int main(int argc, char* argv[])
     constexpr size_t BLOCKSIZE        = 256;
     constexpr size_t ITEMS_PER_THREAD = 2;
 
-    auto in_buffer  = device.create_buffer<int32>(array_size);
-    auto out_buffer = device.create_buffer<int32>(array_size / BLOCKSIZE);
+    auto                 in_buffer  = device.create_buffer<int32>(array_size);
+    auto                 out_buffer = device.create_buffer<int32>(array_size / BLOCKSIZE);
     luisa::vector<int32> result(array_size / BLOCKSIZE);
 
     luisa::vector<int32> input_data(array_size);
@@ -56,13 +56,11 @@ int main(int argc, char* argv[])
                      [&](BufferVar<int> arr_in, BufferVar<int> arr_out, Int n) noexcept
                      {
                          luisa::compute::set_block_size(BLOCKSIZE);
-                         UInt tile_start =
-                             block_size().x * block_id().x * UInt(ITEMS_PER_THREAD);
-                         UInt thid = tile_start + thread_id().x;
+                         UInt tile_start = block_size().x * block_id().x * UInt(ITEMS_PER_THREAD);
+                         UInt thid       = tile_start + thread_id().x;
 
                          ArrayVar<int, ITEMS_PER_THREAD> thread_data;
-                         BlockLoad<int, BLOCKSIZE, ITEMS_PER_THREAD>().Load(
-                             arr_in, thread_data, tile_start);
+                         BlockLoad<int, BLOCKSIZE, ITEMS_PER_THREAD>().Load(arr_in, thread_data, tile_start);
 
                          Int aggregate = BlockReduce<int>().Sum(thread_data, n);
                          $if(thread_id().x == 0)
@@ -71,20 +69,15 @@ int main(int argc, char* argv[])
                          };
                      });
 
-        stream << (*block_reduce_shader)(in_buffer.view(), out_buffer.view(), array_size)
-                      .dispatch(array_size / ITEMS_PER_THREAD);
+        stream << (*block_reduce_shader)(in_buffer.view(), out_buffer.view(), array_size).dispatch(array_size / ITEMS_PER_THREAD);
         stream << out_buffer.copy_to(result.data()) << synchronize();  // 输出结果
 
         for(auto i = 0; i < array_size / (BLOCKSIZE * ITEMS_PER_THREAD); ++i)
         {
-            auto index_result = std::accumulate(
-                input_data.begin() + i * (BLOCKSIZE * ITEMS_PER_THREAD),
-                input_data.begin() + (i + 1) * (BLOCKSIZE * ITEMS_PER_THREAD),
-                0);
-            LUISA_INFO("index: {}, index_result: {}, block_reduce_result: {}",
-                       i,
-                       index_result,
-                       result[i]);
+            auto index_result = std::accumulate(input_data.begin() + i * (BLOCKSIZE * ITEMS_PER_THREAD),
+                                                input_data.begin() + (i + 1) * (BLOCKSIZE * ITEMS_PER_THREAD),
+                                                0);
+            LUISA_INFO("index: {}, index_result: {}, block_reduce_result: {}", i, index_result, result[i]);
             // expect(result[i] == index_result);
         }
     };
@@ -93,7 +86,7 @@ int main(int argc, char* argv[])
     "test_exlusive_scan"_test = [&]
     {
         stream << in_buffer.copy_from(input_data.data()) << synchronize();
-        auto scan_out_buffer = device.create_buffer<int32>(array_size);
+        auto               scan_out_buffer = device.create_buffer<int32>(array_size);
         std::vector<int32> scan_result(array_size);
         luisa::unique_ptr<Shader<1, Buffer<int>, Buffer<int>, int>> block_scan_shader = nullptr;
         lazy_compile(device,
@@ -101,22 +94,18 @@ int main(int argc, char* argv[])
                      [&](BufferVar<int> arr_in, BufferVar<int> arr_out, Int n) noexcept
                      {
                          luisa::compute::set_block_size(BLOCKSIZE);
-                         UInt tile_start =
-                             block_size().x * block_id().x * UInt(ITEMS_PER_THREAD);
-                         UInt thid = tile_start + thread_id().x;
+                         UInt tile_start = block_size().x * block_id().x * UInt(ITEMS_PER_THREAD);
+                         UInt thid       = tile_start + thread_id().x;
 
                          ArrayVar<int, ITEMS_PER_THREAD> thread_data;
-                         BlockLoad<int, BLOCKSIZE, ITEMS_PER_THREAD>().Load(
-                             arr_in, thread_data, tile_start);
+                         BlockLoad<int, BLOCKSIZE, ITEMS_PER_THREAD>().Load(arr_in, thread_data, tile_start);
                          ArrayVar<int, ITEMS_PER_THREAD> scanned_data;
                          Int                             block_aggregate;
                          BlockScan<int>().ExclusiveSum(thread_data, scanned_data, block_aggregate);
-                         BlockStore<int, BLOCKSIZE, ITEMS_PER_THREAD>().Store(
-                             scanned_data, arr_out, tile_start);
+                         BlockStore<int, BLOCKSIZE, ITEMS_PER_THREAD>().Store(scanned_data, arr_out, tile_start);
                      });
 
-        stream << (*block_scan_shader)(in_buffer.view(), scan_out_buffer.view(), array_size)
-                      .dispatch(array_size / ITEMS_PER_THREAD);
+        stream << (*block_scan_shader)(in_buffer.view(), scan_out_buffer.view(), array_size).dispatch(array_size / ITEMS_PER_THREAD);
         stream << scan_out_buffer.copy_to(scan_result.data()) << synchronize();  // 输出结果
         for(auto i = 0; i < array_size / (BLOCKSIZE * ITEMS_PER_THREAD); ++i)
         {
@@ -142,7 +131,7 @@ int main(int argc, char* argv[])
     "test_inlusive_scan"_test = [&]
     {
         stream << in_buffer.copy_from(input_data.data()) << synchronize();
-        auto scan_out_buffer = device.create_buffer<int32>(array_size);
+        auto               scan_out_buffer = device.create_buffer<int32>(array_size);
         std::vector<int32> scan_result(array_size);
         luisa::unique_ptr<Shader<1, Buffer<int>, Buffer<int>, int>> block_scan_shader = nullptr;
         lazy_compile(device,
@@ -150,22 +139,18 @@ int main(int argc, char* argv[])
                      [&](BufferVar<int> arr_in, BufferVar<int> arr_out, Int n) noexcept
                      {
                          luisa::compute::set_block_size(BLOCKSIZE);
-                         UInt tile_start =
-                             block_size().x * block_id().x * UInt(ITEMS_PER_THREAD);
-                         UInt thid = tile_start + thread_id().x;
+                         UInt tile_start = block_size().x * block_id().x * UInt(ITEMS_PER_THREAD);
+                         UInt thid       = tile_start + thread_id().x;
 
                          ArrayVar<int, ITEMS_PER_THREAD> thread_data;
-                         BlockLoad<int, BLOCKSIZE, ITEMS_PER_THREAD>().Load(
-                             arr_in, thread_data, tile_start);
+                         BlockLoad<int, BLOCKSIZE, ITEMS_PER_THREAD>().Load(arr_in, thread_data, tile_start);
                          ArrayVar<int, ITEMS_PER_THREAD> scanned_data;
                          Int                             block_aggregate;
                          BlockScan<int>().InclusiveSum(thread_data, scanned_data, block_aggregate);
-                         BlockStore<int, BLOCKSIZE, ITEMS_PER_THREAD>().Store(
-                             scanned_data, arr_out, tile_start);
+                         BlockStore<int, BLOCKSIZE, ITEMS_PER_THREAD>().Store(scanned_data, arr_out, tile_start);
                      });
 
-        stream << (*block_scan_shader)(in_buffer.view(), scan_out_buffer.view(), array_size)
-                      .dispatch(array_size / ITEMS_PER_THREAD);
+        stream << (*block_scan_shader)(in_buffer.view(), scan_out_buffer.view(), array_size).dispatch(array_size / ITEMS_PER_THREAD);
         stream << scan_out_buffer.copy_to(scan_result.data()) << synchronize();  // 输出结果
         for(auto i = 0; i < array_size / (BLOCKSIZE * ITEMS_PER_THREAD); ++i)
         {

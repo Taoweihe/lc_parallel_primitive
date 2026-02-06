@@ -2,7 +2,7 @@
  * @Author: Ligo 
  * @Date: 2025-10-22 17:17:43 
  * @Last Modified by: Ligo
- * @Last Modified time: 2025-11-13 16:59:59
+ * @Last Modified time: 2026-02-06 14:53:46
  */
 
 
@@ -239,7 +239,6 @@ inline luisa::compute::UInt warp_mask(luisa::compute::UInt warp_id)
 
     return member_mask;
 }
-
 
 
 namespace details
