@@ -77,8 +77,8 @@ int main(int argc, char* argv[])
             auto index_result = std::accumulate(input_data.begin() + i * (BLOCKSIZE * ITEMS_PER_THREAD),
                                                 input_data.begin() + (i + 1) * (BLOCKSIZE * ITEMS_PER_THREAD),
                                                 0);
-            LUISA_INFO("index: {}, index_result: {}, block_reduce_result: {}", i, index_result, result[i]);
-            // expect(result[i] == index_result);
+            // LUISA_INFO("index: {}, index_result: {}, block_reduce_result: {}", i, index_result, result[i]);
+            expect(result[i] == index_result);
         }
     };
 
@@ -166,8 +166,7 @@ int main(int argc, char* argv[])
                 //            i * (BLOCKSIZE * ITEMS_PER_THREAD) + j,
                 //            inclusive_scan_result[j],
                 //            scan_result[i * (BLOCKSIZE * ITEMS_PER_THREAD) + j]);
-                // expect(inclusive_scan_result[j]
-                //        == scan_result[i * (BLOCKSIZE * ITEMS_PER_THREAD) + j]);
+                expect(inclusive_scan_result[j] == scan_result[i * (BLOCKSIZE * ITEMS_PER_THREAD) + j]);
             }
         }
     };

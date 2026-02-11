@@ -18,7 +18,7 @@ namespace details
 {
     constexpr static size_t WARP_SIZE        = 32;
     constexpr static size_t BLOCK_SIZE       = 256;
-    constexpr static size_t ITEMS_PER_THREAD = 2;
+    constexpr static size_t ITEMS_PER_THREAD = 4;
     constexpr static size_t LOG_WARP_SIZE    = 5;
 };  // namespace details
 

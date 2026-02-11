@@ -204,6 +204,9 @@ class DeviceSegmentReduce : public LuisaModule
         // copy result to d_out and d_index_out
         arg_assign<ValueType>(cmdlist, d_out_kv.view(), d_begin_offsets, d_index_out, d_out, num_segments);
         stream << cmdlist.commit() << synchronize();
+
+        d_in_kv.release();
+        d_out_kv.release();
     }
 
 
@@ -237,6 +240,9 @@ class DeviceSegmentReduce : public LuisaModule
         // copy result to d_out and d_index_out
         arg_fixed_size_assign<ValueType>(cmdlist, d_out_kv.view(), d_index_out, d_out, num_segments, segment_size);
         stream << cmdlist.commit() << synchronize();
+
+        d_in_kv.release();
+        d_out_kv.release();
     }
 
 
@@ -272,6 +278,9 @@ class DeviceSegmentReduce : public LuisaModule
         // copy result to d_out and d_index_out
         arg_assign<ValueType>(cmdlist, d_out_kv.view(), d_begin_offsets, d_index_out, d_out, num_segments);
         stream << cmdlist.commit() << synchronize();
+
+        d_in_kv.release();
+        d_out_kv.release();
     }
 
 
@@ -305,6 +314,9 @@ class DeviceSegmentReduce : public LuisaModule
         // copy result to d_out and d_index_out
         arg_fixed_size_assign<ValueType>(cmdlist, d_out_kv.view(), d_index_out, d_out, num_segments, segment_size);
         stream << cmdlist.commit() << synchronize();
+
+        d_in_kv.release();
+        d_out_kv.release();
     }
 
 

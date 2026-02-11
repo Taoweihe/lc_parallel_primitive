@@ -74,6 +74,7 @@ class DeviceReduce : public LuisaModule
         Buffer<Type4Byte> temp_buffer = m_device.create_buffer<Type4Byte>(temp_storage_size);
         reduce_array_recursive<Type4Byte>(cmdlist, temp_buffer.view(), d_in, d_out, num_item, 0, 0, reduce_op, initial_value);
         stream << cmdlist.commit() << synchronize();
+        temp_buffer.release();
     }
 
     template <NumericT Type4Byte, typename ReduceOp>
@@ -92,6 +93,7 @@ class DeviceReduce : public LuisaModule
         reduce_array_recursive<IndexValuePairT<Type4Byte>>(
             cmdlist, temp_buffer.view(), d_in, d_out, num_item, 0, 0, reduce_op, init);
         stream << cmdlist.commit() << synchronize();
+        temp_buffer.release();
     }
 
 
@@ -163,6 +165,9 @@ class DeviceReduce : public LuisaModule
         arg_assign<Type4Byte>(cmdlist, d_out_kv.view(), d_out, d_index_out);
 
         stream << cmdlist.commit() << synchronize();
+
+        d_in_kv.release();
+        d_out_kv.release();
     }
 
     template <NumericT Type4Byte>
@@ -219,6 +224,7 @@ class DeviceReduce : public LuisaModule
         reduce_by_key_array<KeyType, ValueType, ReduceByKeyTileState>(
             cmdlist, tile_states.view(), d_keys_in, d_values_in, d_unique_out, g_aggregates_out, g_num_runs_out, reduce_op, num_elements);
         stream << cmdlist.commit() << synchronize();
+        tile_states.release();
     }
 
 
@@ -238,6 +244,7 @@ class DeviceReduce : public LuisaModule
         reduce_transform_array_recursive<Type4Byte>(
             cmdlist, temp_buffer.view(), d_in, d_out, num_item, 0, 0, reduce_op, transform_op, init);
         stream << cmdlist.commit() << synchronize();
+        temp_buffer.release();
     }
 
   private:

@@ -1,9 +1,9 @@
-// /*
-//  * @Author: Ligo
-//  * @Date: 2025-09-19 16:04:31
-//  * @Last Modified by: Ligo
-//  * @Last Modified time: 2025-09-22 18:11:54
-//  */
+/*
+ * @Author: Ligo
+ * @Date: 2025-09-19 16:04:31
+ * @Last Modified by: Ligo
+ * @Last Modified time: 2025-09-22 18:11:54
+ */
 
 #include <luisa/core/basic_traits.h>
 #include <luisa/core/logging.h>
@@ -37,52 +37,64 @@ int main(int argc, char* argv[])
     constexpr int32_t BLOCK_SIZE       = 128;
     constexpr int32_t ITEMS_PER_THREAD = 4;
     constexpr int32_t WARP_NUMS        = 32;
-    constexpr int32_t array_size       = 2048;
 
     DeviceRadixSort<BLOCK_SIZE, WARP_NUMS, ITEMS_PER_THREAD> radixsorter;
     radixsorter.create(device);
 
     "radix sort key float"_test = [&]
     {
-        using radix_sort_type = float;
-        luisa::vector<radix_sort_type>                  input_key(array_size);
-        luisa::vector<radix_sort_type>                  input_key2(array_size);
-        std::mt19937                                    rng(114521);
-        std::uniform_real_distribution<radix_sort_type> dist(0.0f, 1.0f);
-        for(auto i = 0; i < array_size; i++)
+        for(uint loop = 5; loop < 20; ++loop)
         {
-            input_key[i]  = dist(rng);
-            input_key2[i] = dist(rng);
-        }
-        std::shuffle(input_key.begin(), input_key.end(), rng);
-        std::shuffle(input_key2.begin(), input_key2.end(), rng);
+            uint array_size       = 1 << loop;
+            using radix_sort_type = float;
+            luisa::vector<radix_sort_type>                  input_key(array_size);
+            luisa::vector<radix_sort_type>                  input_to_desc_key(array_size);
+            std::mt19937                                    rng(114521);
+            std::uniform_real_distribution<radix_sort_type> dist(0.0f, 1.0f);
+            for(auto i = 0; i < array_size; i++)
+            {
+                input_key[i]         = dist(rng);
+                input_to_desc_key[i] = dist(rng);
+                // LUISA_INFO("Key {}: {} {}", i, input_key[i], input_to_desc_key[i]);
+            }
 
-        auto key_buffer = device.create_buffer<radix_sort_type>(array_size);
-        stream << key_buffer.copy_from(input_key.data()) << synchronize();
+            auto input_key_buffer = device.create_buffer<radix_sort_type>(array_size);
+            stream << input_key_buffer.copy_from(input_key.data()) << synchronize();
 
-        auto key_out_buffer = device.create_buffer<radix_sort_type>(array_size);
-        radixsorter.SortKeys<radix_sort_type>(
-            cmdlist, stream, key_buffer.view(), key_out_buffer.view(), key_buffer.size());
+            auto output_key_buffer = device.create_buffer<radix_sort_type>(array_size);
+            radixsorter.SortKeys<radix_sort_type>(
+                cmdlist, stream, input_key_buffer.view(), output_key_buffer.view(), input_key_buffer.size());
 
-        auto key2_buffer = device.create_buffer<radix_sort_type>(array_size);
-        stream << key2_buffer.copy_from(input_key2.data()) << synchronize();
-        auto key_descending_out_buffer = device.create_buffer<radix_sort_type>(array_size);
-        radixsorter.SortKeysDescending<radix_sort_type>(
-            cmdlist, stream, key2_buffer.view(), key_descending_out_buffer.view(), key2_buffer.size());
+            luisa::vector<radix_sort_type> result(array_size);
+            stream << output_key_buffer.copy_to(result.data()) << synchronize();
 
-        luisa::vector<radix_sort_type> result(array_size);
-        stream << key_out_buffer.copy_to(result.data()) << synchronize();
+            input_key_buffer.release();
+            output_key_buffer.release();
 
-        luisa::vector<radix_sort_type> desc_result(array_size);
-        stream << key_descending_out_buffer.copy_to(desc_result.data()) << synchronize();
+            // desc
+            auto input_to_desc_key_buffer = device.create_buffer<radix_sort_type>(array_size);
+            stream << input_to_desc_key_buffer.copy_from(input_to_desc_key.data()) << synchronize();
 
+            auto out_desc_key_buffer = device.create_buffer<radix_sort_type>(array_size);
+            radixsorter.SortKeysDescending<radix_sort_type>(cmdlist,
+                                                            stream,
+                                                            input_to_desc_key_buffer.view(),
+                                                            out_desc_key_buffer.view(),
+                                                            input_to_desc_key_buffer.size());
 
-        std::sort(input_key.begin(), input_key.end());
-        std::sort(input_key2.begin(), input_key2.end(), std::greater<radix_sort_type>());
-        for(int i = 0; i < array_size; i++)
-        {
-            expect(result[i] == input_key[i]);
-            expect(desc_result[i] == input_key2[i]);
+            luisa::vector<radix_sort_type> desc_result(array_size);
+            stream << out_desc_key_buffer.copy_to(desc_result.data()) << synchronize();
+            input_to_desc_key_buffer.release();
+            out_desc_key_buffer.release();
+
+            std::sort(input_key.begin(), input_key.end());
+            std::sort(input_to_desc_key.begin(), input_to_desc_key.end(), std::greater<radix_sort_type>());
+            for(int i = 0; i < array_size; i++)
+            {
+                // LUISA_INFO("Key {}, Asc: {}, Desc: {}", i, result[i], desc_result[i]);
+                expect(result[i] == input_key[i]);
+                expect(desc_result[i] == input_to_desc_key[i]);
+            }
         }
     };
 
@@ -119,8 +131,9 @@ int main(int argc, char* argv[])
 
     "radix sort pair(uint-float)"_test = [&]
     {
-        using radix_key_type   = uint;
-        using radix_value_type = float;
+        constexpr int32_t array_size = 524288;
+        using radix_key_type         = uint;
+        using radix_value_type       = float;
         luisa::vector<radix_key_type>         input_key(array_size);
         luisa::vector<radix_key_type>         input_dec_key(array_size);
         luisa::vector<radix_value_type>       input_value(array_size);

@@ -7,7 +7,6 @@
 
 
 #pragma once
-#include "luisa/runtime/buffer.h"
 #include <cstddef>
 #include <luisa/runtime/stream.h>
 #include <luisa/dsl/struct.h>
@@ -92,6 +91,7 @@ class DeviceScan : public LuisaModule
             m_device.create_buffer<ScanTileStateT>(details::WARP_SIZE + num_tiles);
         scan_array<Type4Byte>(cmdlist, tile_states.view(), d_in, d_out, num_items, scan_op, initial_value, true);
         stream << cmdlist.commit() << synchronize();
+        tile_states.release();
     }
 
     template <NumericT Type4Byte>
@@ -141,6 +141,7 @@ class DeviceScan : public LuisaModule
         scan_by_key_array<KeyType, ValueType>(
             cmdlist, tile_states.view(), d_keys_in, d_prev_keys_in.view(), d_values_in, d_values_out, num_items, scan_op, initial_value, false);
         stream << cmdlist.commit() << synchronize();
+        tile_states.release();
     }
 
     template <NumericT KeyType, NumericT ValueType, typename ScanOp>
@@ -164,6 +165,7 @@ class DeviceScan : public LuisaModule
         scan_by_key_array<KeyType, ValueType>(
             cmdlist, tile_states.view(), d_keys_in, d_prev_keys_in.view(), d_values_in, d_values_out, num_items, scan_op, initial_value, true);
         stream << cmdlist.commit() << synchronize();
+        tile_states.release();
     }
 
 
@@ -217,7 +219,7 @@ class DeviceScan : public LuisaModule
                     Type4Byte                  initial_value,
                     bool                       is_inclusive)
     {
-        auto num_tiles = imax(1, (int)ceil((float)num_items / (ITEMS_PER_THREAD * m_block_size)));
+        auto num_tiles = imax(1, (uint)ceil((float)num_items / (ITEMS_PER_THREAD * m_block_size)));
 
         using ScanShader    = details::ScanModule<Type4Byte, BLOCK_SIZE, ITEMS_PER_THREAD>;
         using ScanTileState = ScanShader::TileState;

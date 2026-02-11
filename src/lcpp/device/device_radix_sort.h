@@ -181,7 +181,7 @@ class DeviceRadixSort : public LuisaModule
         }
         auto ms_radix_sort_histogram_ptr =
             reinterpret_cast<RadixSortHistogramKernel*>(&(*ms_radix_sort_histogram_it->second));
-        const auto num_sms             = 128;
+        const auto num_sms             = BLOCK_SIZE;
         const auto histo_blocks_per_sm = 1;
         // LUISA_INFO("max_num_blocks * num_portions: {} * {} = {},num_items:{}",
         //            max_num_blocks,
@@ -192,7 +192,6 @@ class DeviceRadixSort : public LuisaModule
         cmdlist << (*ms_radix_sort_histogram_ptr)(
                        d_bins_buffer.view(), ByteBufferView{d_keys.current()}, num_items, begin_bit, end_bit)
                        .dispatch(num_sms * histo_blocks_per_sm * m_block_size);
-
         stream << cmdlist.commit() << synchronize();
 
         // luisa::vector<uint> host_bins(d_bins_buffer.size());
@@ -304,7 +303,6 @@ class DeviceRadixSort : public LuisaModule
                            .dispatch(num_blocks * ONESWEEP_BLOCK_THREADS);
                 stream << cmdlist.commit() << synchronize();
             }
-
             if(!is_overwrite_okay && pass == 0)
             {
                 d_keys   = num_passes % 2 == 0 ?
@@ -316,6 +314,15 @@ class DeviceRadixSort : public LuisaModule
             }
             d_keys.selector ^= 1;
             d_values.selector ^= 1;
+        }
+
+        d_bins_buffer.release();
+        d_lookback_buffer.release();
+        d_ctrs_buffer.release();
+        if(!is_overwrite_okay && num_passes > 1)
+        {
+            d_keys_tmp2_buffer.release();
+            d_values_tmp2_buffer.release();
         }
     }
 
