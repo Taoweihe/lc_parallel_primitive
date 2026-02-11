@@ -86,6 +86,37 @@ int main(int argc, char* argv[])
         }
     };
 
+    "radix sort key uint variant size"_test = [&]
+    {
+        DeviceRadixSort<> device_radix_sort;
+        device_radix_sort.create(device);
+        for(uint loop = 0; loop < 24; ++loop)
+        {
+            uint                num_items  = 1 << loop;
+            Buffer<uint>        d_keys_in  = device.create_buffer<uint>(num_items);
+            Buffer<uint>        d_keys_out = device.create_buffer<uint>(num_items);
+            luisa::vector<uint> host_keys(num_items);
+            for(uint i = 0; i < num_items; ++i)
+            {
+                host_keys[i] = num_items - i - 1;
+            }
+            stream << d_keys_in.copy_from(host_keys.data()) << synchronize();
+            CommandList cmdlist;
+            device_radix_sort.SortKeys(cmdlist, stream, d_keys_in.view(), d_keys_out.view(), num_items);
+            stream << cmdlist.commit() << synchronize();
+            luisa::vector<uint> host_keys_out(num_items);
+            stream << d_keys_out.copy_to(host_keys_out.data()) << synchronize();
+
+            d_keys_in.release();
+            d_keys_out.release();
+
+            for(uint i = 0; i < num_items; ++i)
+            {
+                expect(host_keys_out[i] == i);
+            }
+        }
+    };
+
     "radix sort pair(uint-float)"_test = [&]
     {
         using radix_key_type   = uint;

@@ -170,10 +170,8 @@ namespace details
                 sync_block();
                 UInt portion_offset = portion_id * MAX_PORTION_SIZE;
                 UInt portion_size   = min(num_items - portion_offset, UInt(MAX_PORTION_SIZE));
-                $for(offset,
-                     block_id().x * UInt(TILE_ITEMS),
-                     UInt(portion_size),
-                     UInt(TILE_ITEMS) * block_size().x)
+                UInt num_blocks     = dispatch_size().x / UInt(BLOCK_SIZE);
+                $for(offset, block_id().x * UInt(TILE_ITEMS), UInt(portion_size), UInt(TILE_ITEMS) * num_blocks)
                 {
                     UInt tile_offset = portion_offset + offset;
                     ArrayVar<bit_ordered_type, ITEMS_PER_THREAD> keys;

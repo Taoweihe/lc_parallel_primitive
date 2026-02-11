@@ -160,6 +160,11 @@ class DeviceRadixSort : public LuisaModule
         }
         auto d_ctrs_buffer = m_device.create_buffer<uint>(allocation_sizes[3]);
 
+        // TODO: Reset buffers on device
+        luisa::vector<uint> zeros_bins(allocation_sizes[0], 0u);
+        luisa::vector<uint> zeros_lookback(allocation_sizes[1], 0u);
+        luisa::vector<uint> zeros_ctrs(allocation_sizes[3], 0u);
+        stream << d_bins_buffer.copy_from(zeros_bins.data()) << d_ctrs_buffer.copy_from(zeros_ctrs.data());
 
         auto radix_sort_key = get_type_and_op_desc<KeyType, ValueType>()
                               + luisa::string(IS_DESCENDING ? "_desc" : "_asc");
@@ -274,6 +279,10 @@ class DeviceRadixSort : public LuisaModule
                 uint num_blocks        = ceil_div(portion_num_items, ONESWEEP_TILE_ITEMS);
 
                 // LUISA_INFO("  Pass {}, Portion {}, portion_num_items: {}, num_blocks: {}", pass, portion, portion_num_items, num_blocks);
+
+                // Clear lookback buffer before each onesweep dispatch
+                stream << d_lookback_buffer.copy_from(zeros_lookback.data());
+
                 // dispatch
                 cmdlist
                     << (*ms_radix_sort_onesweep_ptr)(
