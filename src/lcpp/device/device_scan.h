@@ -72,6 +72,7 @@ class DeviceScan : public LuisaModule
             m_device.create_buffer<ScanTileStateT>(details::WARP_SIZE + num_tiles);
         scan_array<Type4Byte>(cmdlist, tile_states.view(), d_in, d_out, num_items, scan_op, initial_value, false);
         stream << cmdlist.commit() << synchronize();
+        tile_states.release();
     }
 
     template <NumericT Type4Byte, typename ScanOp>
@@ -142,6 +143,7 @@ class DeviceScan : public LuisaModule
             cmdlist, tile_states.view(), d_keys_in, d_prev_keys_in.view(), d_values_in, d_values_out, num_items, scan_op, initial_value, false);
         stream << cmdlist.commit() << synchronize();
         tile_states.release();
+        d_prev_keys_in.release();
     }
 
     template <NumericT KeyType, NumericT ValueType, typename ScanOp>
@@ -166,6 +168,7 @@ class DeviceScan : public LuisaModule
             cmdlist, tile_states.view(), d_keys_in, d_prev_keys_in.view(), d_values_in, d_values_out, num_items, scan_op, initial_value, true);
         stream << cmdlist.commit() << synchronize();
         tile_states.release();
+        d_prev_keys_in.release();
     }
 
 
@@ -219,14 +222,14 @@ class DeviceScan : public LuisaModule
                     Type4Byte                  initial_value,
                     bool                       is_inclusive)
     {
-        auto num_tiles = imax(1, (uint)ceil((float)num_items / (ITEMS_PER_THREAD * m_block_size)));
+        uint num_tiles = imax(1, ceil_div(num_items, (ITEMS_PER_THREAD * m_block_size)));
 
         using ScanShader    = details::ScanModule<Type4Byte, BLOCK_SIZE, ITEMS_PER_THREAD>;
         using ScanTileState = ScanShader::TileState;
         using ScanTileStateInitKernel = ScanShader::ScanTileStateInitKernel;
         using ScanShaderKernel        = ScanShader::ScanKernel;
 
-        size_t init_num_blocks = ceil(float(num_tiles) / BLOCK_SIZE);
+        size_t init_num_blocks = ceil_div(num_tiles, m_block_size);
         auto   init_key = luisa::string{luisa::compute::Type::of<Type4Byte>()->description()};
         auto   ms_tile_state_init_it = ms_scan_key.find(init_key);
         if(ms_tile_state_init_it == ms_scan_key.end())
@@ -237,15 +240,13 @@ class DeviceScan : public LuisaModule
         }
         auto ms_scan_tile_state_init_ptr =
             reinterpret_cast<ScanTileStateInitKernel*>(&(*ms_tile_state_init_it->second));
-
-        cmdlist << (*ms_scan_tile_state_init_ptr)(tile_states, uint(num_tiles)).dispatch(init_num_blocks * BLOCK_SIZE);
+        cmdlist << (*ms_scan_tile_state_init_ptr)(tile_states, uint(num_tiles)).dispatch(m_block_size * init_num_blocks);
 
         // scan
         auto key = get_type_and_op_desc<Type4Byte>(scan_op);
         auto ms_scan_it = is_inclusive ? ms_inclusive_scan_map.find(key) : ms_exclusive_scan_map.find(key);
         if(ms_scan_it == (is_inclusive ? ms_inclusive_scan_map : ms_exclusive_scan_map).end())
         {
-            LUISA_INFO("Compiling Scan shader for key: {}", key);
             if(is_inclusive)
             {
                 auto shader = ScanShader().template compile<true>(m_device, m_shared_mem_size, scan_op);
@@ -276,14 +277,14 @@ class DeviceScan : public LuisaModule
                            ValueType                  initial_value,
                            bool                       is_inclusive)
     {
-        auto num_tiles = imax(1, (int)ceil((float)num_items / (ITEMS_PER_THREAD * m_block_size)));
+        uint num_tiles = imax(1, ceil_div(num_items, (ITEMS_PER_THREAD * m_block_size)));
 
         using ScanByKeyShader = details::ScanByKeyModule<KeyValue, ValueType, BLOCK_SIZE, ITEMS_PER_THREAD>;
         using ScanByKeyTileState           = ScanByKeyShader::ScanTileState;
         using ScanByKeyTileStateInitKernel = ScanByKeyShader::ScanTileStateInitKernel;
         using ScanByKeyShaderKernel        = ScanByKeyShader::ScanByKeyKernel;
 
-        size_t init_num_blocks                 = ceil(float(num_tiles) / BLOCK_SIZE);
+        size_t init_num_blocks                 = ceil_div(num_tiles, m_block_size);
         auto   init_key                        = get_type_and_op_desc<KeyValue, ValueType>();
         auto ms_scan_by_key_tile_state_init_it = ms_scan_by_key_tile_state_init_map.find(init_key);
         if(ms_scan_by_key_tile_state_init_it == ms_scan_by_key_tile_state_init_map.end())
@@ -295,7 +296,7 @@ class DeviceScan : public LuisaModule
         auto ms_scan_by_key_tile_state_init_ptr =
             reinterpret_cast<ScanByKeyTileStateInitKernel*>(&(*ms_scan_by_key_tile_state_init_it->second));
         cmdlist << (*ms_scan_by_key_tile_state_init_ptr)(tile_states, d_keys_in, d_prev_keys_in, uint(num_tiles))
-                       .dispatch(m_block_size * num_tiles);
+                       .dispatch(m_block_size * init_num_blocks);
 
         // scan
         auto key           = get_type_and_op_desc<KeyValue, ValueType>(scan_op);

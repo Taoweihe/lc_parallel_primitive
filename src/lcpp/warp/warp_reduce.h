@@ -121,7 +121,7 @@ class WarpReduce : public LuisaModule
     {
         compute::set_warp_size(WARP_SIZE);
         Var<Type4Byte> result;
-        if(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
+        if constexpr(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
         {
             result = details::WarpReduceShfl<Type4Byte, WARP_SIZE>().template SegmentReduce<false>(
                 d_in, flag, redecu_op, valid_item);

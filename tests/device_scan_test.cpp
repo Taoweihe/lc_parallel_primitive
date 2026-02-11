@@ -34,39 +34,52 @@ int main(int argc, char* argv[])
     Stream      stream = device.create_stream();
     CommandList cmdlist;
 
-    constexpr int32_t array_size       = 10240;
-    constexpr int32_t BLOCK_SIZE       = 128;
-    constexpr int32_t ITEMS_PER_THREAD = 2;
+    constexpr int32_t BLOCK_SIZE       = 256;
+    constexpr int32_t ITEMS_PER_THREAD = 4;
     constexpr int32_t WARP_NUMS        = 32;
 
     DeviceScan<BLOCK_SIZE, WARP_NUMS, ITEMS_PER_THREAD> scanner;
     scanner.create(device);
 
-    luisa::vector<int32> input_data(array_size);
-    for(int i = 0; i < array_size; i++)
-    {
-        input_data[i] = i;
-    }
-    // std::mt19937 rng(114521);  // 固定种子
-    // std::shuffle(input_data.begin(), input_data.end(), rng);
-
     "exclusive_scan"_test = [&]
     {
-        auto in_buffer  = device.create_buffer<int32>(array_size);
-        auto out_buffer = device.create_buffer<int32>(array_size);
-        stream << in_buffer.copy_from(input_data.data()) << synchronize();
-
-        scanner.ExclusiveSum(cmdlist, stream, in_buffer.view(), out_buffer.view(), in_buffer.size());
-
-        luisa::vector<int32> result(array_size);
-        stream << out_buffer.copy_to(result.data()) << synchronize();
-        luisa::vector<int32> expected(array_size);
-        std::exclusive_scan(input_data.begin(), input_data.end(), expected.begin(), 0);
-
-        for(auto i = 0; i < array_size; i++)
+        for(int i = 0; i < 20; i++)
         {
-            LUISA_INFO("exclusiv {}: {} - (expected): {}", i, result[i], expected[i]);
-            expect(result[i] == expected[i]);
+            const uint          array_size = 1 << i;
+            luisa::vector<uint> input_data(array_size, 1);
+            auto                in_buffer  = device.create_buffer<uint>(array_size);
+            auto                out_buffer = device.create_buffer<uint>(array_size);
+            stream << in_buffer.copy_from(input_data.data()) << synchronize();
+
+            scanner.ExclusiveSum(cmdlist, stream, in_buffer.view(), out_buffer.view(), in_buffer.size());
+
+            luisa::vector<uint> result(array_size);
+            stream << out_buffer.copy_to(result.data()) << synchronize();
+            luisa::vector<uint> expected(array_size);
+            std::exclusive_scan(input_data.begin(), input_data.end(), expected.begin(), 0);
+
+            auto pass = std::equal(result.begin(), result.end(), expected.begin());
+            // if(!pass)
+            // {
+            //     // 打印第一个不匹配的位置
+            //     for(uint j = 0; j < array_size; j++)
+            //     {
+            //         if(result[j] != expected[j])
+            //         {
+            //             LUISA_INFO("MISMATCH at index {} (array_size=2^{}={}): result={}, expected={}",
+            //                        j,
+            //                        i,
+            //                        array_size,
+            //                        result[j],
+            //                        expected[j]);
+            //             LUISA_INFO("  tile_idx={}, offset_in_tile={}",
+            //                        j / (BLOCK_SIZE * ITEMS_PER_THREAD),
+            //                        j % (BLOCK_SIZE * ITEMS_PER_THREAD));
+            //             break;
+            //         }
+            //     }
+            // }
+            expect(pass) << "Exclusive scan failed for array size " << i;
         }
     };
 

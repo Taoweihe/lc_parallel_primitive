@@ -163,7 +163,6 @@ struct ScanTileStateViewer
         {
             curr_tile_state = tile_state.volatile_read(compute::Int(TILE_STATUS_PADDING) + tile_index);
         };
-
         out_status = curr_tile_state.status;
         out_value  = curr_tile_state.value;
     };
@@ -302,7 +301,13 @@ class TilePrefixCallbackOp : public LuisaModule
         Var<T> value;
         ScanTileStateViewer::WaitForValid(tile_status, predecessor_idx, predecessor_status, value, delay);
 
+
         compute::Int tail_flag = predecessor_status == StatusWordT(ScanTileStatus::SCAN_TILE_INCLUSIVE);
+
+        $if(block_id().x == 110)
+        {
+            device_log("Tile {}: status = {}, value = {} tail_flag = {}", predecessor_idx, predecessor_status, value, tail_flag);
+        };
 
         windows_aggregate =
             WarpReduceT().TailSegmentedReduce(value, tail_flag, SwizzleScanOp<ScanOpT>(scan_op));
