@@ -214,15 +214,11 @@ inline luisa::compute::Int conflict_free_offset(luisa::compute::Int i)
     return i >> log_mem_banks;
 }
 
-static luisa::compute::Callable get_lane_mask_ge = [](luisa::compute::UInt lane_id, luisa::compute::UInt wave_size)
-{
-    luisa::compute::ULong mask64 = ~((1ull << lane_id) - 1ull);
-    mask64 &= (1ull << wave_size) - 1ull;
-    return static_cast<luisa::compute::UInt>(mask64);
-};
+static luisa::compute::Callable get_lane_mask_ge = []()
+{ return 0xFFFFFFFFu << compute::warp_lane_id(); };
 
-static luisa::compute::Callable get_lane_mask_le = [](luisa::compute::UInt lane_id)
-{ return ~(0xFFFFFFFEu << lane_id); };
+static luisa::compute::Callable get_lane_mask_le = []()
+{ return (1u << (compute::warp_lane_id() + 1)) - 1; };
 
 template <size_t LOGIC_WARP_SIZE>
 inline luisa::compute::UInt warp_mask(luisa::compute::UInt warp_id)

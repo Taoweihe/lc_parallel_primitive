@@ -47,7 +47,7 @@ class WarpReduce : public LuisaModule
     {
         compute::set_warp_size(WARP_SIZE);
         Var<Type4Byte> result;
-        if(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
+        if constexpr(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
         {
             result = details::WarpReduceShfl<Type4Byte, WARP_SIZE>().Reduce(d_in, op, valid_item);
         };
@@ -87,9 +87,8 @@ class WarpReduce : public LuisaModule
                                        ReduceOp              redecu_op,
                                        compute::UInt         valid_item = WARP_SIZE)
     {
-        compute::set_warp_size(WARP_SIZE);
         Var<Type4Byte> result;
-        if(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
+        if constexpr(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
         {
             result = details::WarpReduceShfl<Type4Byte, WARP_SIZE>().SegmentReduce<true>(d_in, flag, redecu_op, valid_item);
         };
@@ -99,9 +98,8 @@ class WarpReduce : public LuisaModule
     template <typename FlagT>
     Var<Type4Byte> HeadSegmentedSum(const Var<Type4Byte>& d_in, const Var<FlagT>& flag, compute::UInt valid_item = WARP_SIZE)
     {
-        compute::set_warp_size(WARP_SIZE);
         Var<Type4Byte> result;
-        if(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
+        if constexpr(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
         {
             result = details::WarpReduceShfl<Type4Byte, WARP_SIZE>().SegmentReduce<true>(
                 d_in,
@@ -119,7 +117,6 @@ class WarpReduce : public LuisaModule
                                        ReduceOp              redecu_op,
                                        compute::UInt         valid_item = WARP_SIZE)
     {
-        compute::set_warp_size(WARP_SIZE);
         Var<Type4Byte> result;
         if constexpr(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
         {
@@ -133,9 +130,8 @@ class WarpReduce : public LuisaModule
     template <typename FlagT>
     Var<Type4Byte> TailSegmentedSum(const Var<Type4Byte>& d_in, const Var<FlagT>& flag, compute::UInt valid_item = WARP_SIZE)
     {
-        compute::set_warp_size(WARP_SIZE);
         Var<Type4Byte> result;
-        if(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
+        if constexpr(WarpReduceMethod == WarpReduceAlgorithm::WARP_SHUFFLE)
         {
             result = details::WarpReduceShfl<Type4Byte, WARP_SIZE>().template SegmentReduce<false>(
                 d_in,

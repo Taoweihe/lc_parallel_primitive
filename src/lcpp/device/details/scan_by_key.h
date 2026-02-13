@@ -226,11 +226,6 @@ namespace details
                                 local_scan_items, output_scan_items, pair_scan_op, prefix_op);
                             tile_aggregate = prefix_op.GetBlockAggregate();
                         }
-                        device_log("thid: {},tile_pred_key:{}, output_scan_items: {},local_segment_flags:{}",
-                                   dispatch_id().x,
-                                   tile_pred_key,
-                                   output_scan_items,
-                                   local_segment_flags);
                     };
 
                     sync_block();

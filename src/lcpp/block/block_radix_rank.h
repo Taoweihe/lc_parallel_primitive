@@ -231,7 +231,7 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
                 UInt bin_mask    = m_match_masks->read(bin);
                 UInt leader      = (WARP_SIZE - 1) - luisa::compute::clz(bin_mask);
                 UInt warp_offset = 0;
-                UInt popc        = popcount(bin_mask & get_lane_mask_le(m_lane));
+                UInt popc        = popcount(bin_mask & get_lane_mask_le());
 
                 $if(m_lane == leader)
                 {
@@ -264,7 +264,7 @@ class BlockRadixRankMatchEarlyCounts : public LuisaModule
                         bin, m_warp);
                 UInt leader      = (WARP_SIZE - 1) - luisa::compute::clz(bin_mask);
                 UInt warp_offset = 0;
-                UInt popc        = popcount(bin_mask & get_lane_mask_le(m_lane));
+                UInt popc        = popcount(bin_mask & get_lane_mask_le());
                 $if(m_lane == leader)
                 {
                     // warp_offset

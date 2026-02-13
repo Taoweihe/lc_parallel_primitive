@@ -25,7 +25,7 @@ package("luisa-compute")
     set_license("Apache-2.0")
 
     add_urls("https://github.com/LuisaGroup/LuisaCompute.git", {submodules = false})
-    add_versions("2025.02.06", "ba723cc001da99cbcbe248e451f1a860da8c61f0")
+    add_versions("2026.02.06", "ba723cc001da99cbcbe248e451f1a860da8c61f0")
 
     add_configs("cuda", {description = "Enable CUDA backend", default = false, type = "boolean"})
     add_configs("vulkan", {description = "Enable Vulkan backend", default = false, type = "boolean"})

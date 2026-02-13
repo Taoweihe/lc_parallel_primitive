@@ -23,6 +23,7 @@ int main(int argc, char* argv[])
 {
     log_level_verbose();
 
+    LUISA_INFO(argv[1]);
     Context context{argv[1]};
 #ifdef _WIN32
     Device device = context.create_device("cuda");
@@ -43,7 +44,7 @@ int main(int argc, char* argv[])
 
     "radix sort key float"_test = [&]
     {
-        for(uint loop = 5; loop < 20; ++loop)
+        for(uint loop = 5; loop < 24; ++loop)
         {
             uint array_size       = 1 << loop;
             using radix_sort_type = float;
@@ -89,12 +90,11 @@ int main(int argc, char* argv[])
 
             std::sort(input_key.begin(), input_key.end());
             std::sort(input_to_desc_key.begin(), input_to_desc_key.end(), std::greater<radix_sort_type>());
-            for(int i = 0; i < array_size; i++)
-            {
-                // LUISA_INFO("Key {}, Asc: {}, Desc: {}", i, result[i], desc_result[i]);
-                expect(result[i] == input_key[i]);
-                expect(desc_result[i] == input_to_desc_key[i]);
-            }
+
+            bool pass = std::equal(result.begin(), result.end(), input_key.begin());
+            bool desc_pass = std::equal(desc_result.begin(), desc_result.end(), input_to_desc_key.begin());
+            expect(pass) << "Radix sort float key ascending failed at size " << array_size;
+            expect(desc_pass) << "Radix sort float key descending failed at size " << array_size;
         }
     };
 
@@ -119,13 +119,9 @@ int main(int argc, char* argv[])
             luisa::vector<uint> host_keys_out(num_items);
             stream << d_keys_out.copy_to(host_keys_out.data()) << synchronize();
 
-            d_keys_in.release();
-            d_keys_out.release();
-
-            for(uint i = 0; i < num_items; ++i)
-            {
-                expect(host_keys_out[i] == i);
-            }
+            std::sort(host_keys.begin(), host_keys.end());
+            bool pass = std::equal(host_keys_out.begin(), host_keys_out.end(), host_keys.begin());
+            expect(pass) << "Radix sort uint key ascending failed at size " << num_items;
         }
     };
 
@@ -217,14 +213,35 @@ int main(int argc, char* argv[])
                      const std::pair<radix_key_type, radix_value_type>& b)
                   { return a.first > b.first; });
 
-        for(int i = 0; i < array_size; i++)
-        {
-            // LUISA_INFO("Key {}, Value: {}", i, result[i], value_result[i]);
-            // LUISA_INFO("Dec Key  {}, Value: {}", i, desc_result[i], desc_value_result[i]);
-            expect(result[i] == key_value_pairs[i].first && value_result[i] == key_value_pairs[i].second);
-            expect(desc_result[i] == dec_key_value_pairs[i].first
-                   && desc_value_result[i] == dec_key_value_pairs[i].second);
-        }
+        bool pass =
+            std::equal(result.begin(),
+                       result.end(),
+                       key_value_pairs.begin(),
+                       [](const radix_key_type& a, const std::pair<radix_key_type, radix_value_type>& b)
+                       { return a == b.first; });
+        bool value_pass =
+            std::equal(value_result.begin(),
+                       value_result.end(),
+                       key_value_pairs.begin(),
+                       [](const radix_value_type& a, const std::pair<radix_key_type, radix_value_type>& b)
+                       { return a == b.second; });
+
+        expect(pass && value_pass) << "Radix sort uint-float pair ascending key failed at size " << array_size;
+
+        bool desc_pass =
+            std::equal(desc_result.begin(),
+                       desc_result.end(),
+                       dec_key_value_pairs.begin(),
+                       [](const radix_key_type& a, const std::pair<radix_key_type, radix_value_type>& b)
+                       { return a == b.first; });
+        bool desc_value_pass =
+            std::equal(desc_value_result.begin(),
+                       desc_value_result.end(),
+                       dec_key_value_pairs.begin(),
+                       [](const radix_value_type& a, const std::pair<radix_key_type, radix_value_type>& b)
+                       { return a == b.second; });
+        expect(desc_pass && desc_value_pass)
+            << "Radix sort uint-float pair descending key failed at size " << array_size;
     };
 
     return 0;

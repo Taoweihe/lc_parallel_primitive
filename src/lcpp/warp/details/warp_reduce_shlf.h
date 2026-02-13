@@ -21,20 +21,33 @@ namespace details
     template <typename Type4Byte, size_t LOGIC_WARP_SIZE = details::WARP_SIZE>
     struct WarpReduceShfl
     {
+        compute::UInt lane_id;
+        compute::UInt warp_id;
+
+        compute::UInt member_mask;
+        WarpReduceShfl()
+            : lane_id(warp_lane_id())
+            , warp_id(IS_ARCH_WARP ? 0 : warp_lane_id() / compute::UInt(LOGIC_WARP_SIZE))
+            , member_mask(IS_ARCH_WARP ? 0xFFFFFFFFu : warp_mask<LOGIC_WARP_SIZE>(warp_id))
+        {
+            if constexpr(!IS_ARCH_WARP)
+            {
+                lane_id = lane_id % compute::UInt(LOGIC_WARP_SIZE);
+            }
+        }
+
         constexpr static bool IS_ARCH_WARP = (LOGIC_WARP_SIZE == details::WARP_SIZE);
 
         template <typename ReduceOp>
         Var<Type4Byte> Reduce(const Var<Type4Byte>& input, ReduceOp op, UInt valid_item = LOGIC_WARP_SIZE)
         {
-            Var<Type4Byte> result    = input;
-            compute::UInt  lane_id   = compute::warp_lane_id();
-            compute::UInt  wave_size = compute::warp_lane_count();
+            Var<Type4Byte> result = input;
 
             compute::UInt offset = 1u;
-            $while(offset < wave_size)
+            $while(offset < compute::warp_lane_count())
             {
                 Var<Type4Byte> temp = ShuffleDown(result, lane_id, offset, valid_item);
-                $if(lane_id + offset < valid_item)
+                $if(lane_id + offset <= valid_item)
                 {
                     result = op(result, temp);
                 };
@@ -50,29 +63,24 @@ namespace details
                                      ReduceOp              redecu_op,
                                      UInt                  valid_item = LOGIC_WARP_SIZE)
         {
-            compute::UInt lane_id   = compute::warp_lane_id();
-            compute::UInt wave_size = compute::warp_lane_count();
-
-            UInt warp_flags = compute::warp_active_bit_mask(flag == 1).x;
+            UInt warp_flags = compute::warp_active_bit_mask(flag == 1u).x;
             if constexpr(HEAD_SEGMENT)
             {
                 warp_flags >>= 1;
             };
 
+            warp_flags &= get_lane_mask_ge();
+
             if constexpr(!IS_ARCH_WARP)
             {
-                compute::UInt member_mask = warp_mask<LOGIC_WARP_SIZE>(lane_id);
-                compute::UInt warp_id     = lane_id / compute::UInt(LOGIC_WARP_SIZE);
                 warp_flags = (warp_flags & member_mask) >> (warp_id * UInt(LOGIC_WARP_SIZE));
             };
 
-            warp_flags &= get_lane_mask_ge(lane_id, wave_size);
+            warp_flags |= 1u << (UInt(LOGIC_WARP_SIZE) - 1u);
 
-            warp_flags |= 1u << (wave_size - 1u);
+            UInt last_lane = compute::ctz(warp_flags);
 
-            UInt last_lane = compute::clz(compute::reverse(warp_flags));
-
-            return Reduce(input, redecu_op, last_lane + 1);
+            return Reduce(input, redecu_op, last_lane);
         }
     };
 }  // namespace details

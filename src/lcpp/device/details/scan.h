@@ -121,7 +121,6 @@ namespace details
                             block_scan.ExclusiveScan(items, output_items, scan_op, prefix_op);
                         }
                     };
-                    // device_log("thid: {}, thread_id: {}, items: {}, output_items: {}", dispatch_id().x, thid, items, output_items);
 
                     sync_block();
                     $if(is_last_tile)
